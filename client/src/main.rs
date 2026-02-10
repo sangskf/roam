@@ -44,8 +44,20 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Load .env file
+    // 1. Try loading from current directory (standard behavior)
     dotenvy::dotenv().ok();
-    // Also try loading from client/.env if running from workspace root
+    
+    // 2. Try loading from the directory of the executable (service behavior fallback)
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let env_path = exe_dir.join(".env");
+            if env_path.exists() {
+                 let _ = dotenvy::from_path(&env_path);
+            }
+        }
+    }
+
+    // 3. Development fallback
     let _ = dotenvy::from_filename("client/.env");
 
     tracing_subscriber::fmt::init();

@@ -54,18 +54,15 @@ jobs:
       - name: Prepare Package
         shell: bash
         run: |
-          mkdir -p package/server/web
+          mkdir -p package
           
           # Copy binaries
           cp target/${{ matrix.platform.target }}/release/client${{ matrix.platform.ext }} package/
           cp target/${{ matrix.platform.target }}/release/server${{ matrix.platform.ext }} package/
           
-          # Copy Web Assets (Required for Server)
-          cp -r server/web/* package/server/web/
-          
-          # Copy Example Configs (Optional but helpful)
-          # cp server/.env package/server/.env.example
-          # cp client/.env package/client/.env.example
+          # Copy Example Configs
+          cp server/.env package/server.env.example
+          cp client/.env package/client.env.example
           
           # Copy README
           cp README.md package/

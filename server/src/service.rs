@@ -5,7 +5,10 @@ pub fn install_service() -> anyhow::Result<()> {
     let manager = <dyn ServiceManager>::native()?;
 
     let exec_path = std::env::current_exe()?;
-    let working_dir = std::env::current_dir()?;
+    // Use the directory of the executable as the working directory
+    let working_dir = exec_path.parent()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get executable directory"))?
+        .to_path_buf();
 
     manager.install(ServiceInstallCtx {
         label: label.clone(),

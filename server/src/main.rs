@@ -3,6 +3,7 @@ mod handlers;
 mod state;
 mod config;
 mod service;
+mod assets;
 
 use axum::{routing::{get, post}, Router, extract::DefaultBodyLimit};
 use std::net::SocketAddr;
@@ -44,8 +45,20 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Load .env file
+    // 1. Try loading from current directory (standard behavior)
     dotenvy::dotenv().ok();
-    // Also try loading from server/.env if running from workspace root
+    
+    // 2. Try loading from the directory of the executable (service behavior fallback)
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let env_path = exe_dir.join(".env");
+            if env_path.exists() {
+                 let _ = dotenvy::from_path(&env_path);
+            }
+        }
+    }
+    
+    // 3. Development fallback
     let _ = dotenvy::from_filename("server/.env");
 
     // Initialize tracing
@@ -79,7 +92,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/scripts/:id/run", post(handlers::run_script))
         .route("/api/history", get(handlers::get_script_history).delete(handlers::clear_script_history))
         .route("/ws", get(handlers::ws_handler))
-        .nest_service("/", ServeDir::new("server/web"))
+        .fallback(assets::static_handler)
         .layer(DefaultBodyLimit::max(1024 * 1024 * 1024 * 2)) // 2GB
         .with_state(app_state);
 
