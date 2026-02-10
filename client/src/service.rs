@@ -1,0 +1,59 @@
+use service_manager::*;
+
+pub fn install_service() -> anyhow::Result<()> {
+    let label: ServiceLabel = "roam-client".parse()?;
+    let manager = <dyn ServiceManager>::native()?;
+
+    let exec_path = std::env::current_exe()?;
+    let working_dir = std::env::current_dir()?;
+
+    manager.install(ServiceInstallCtx {
+        label: label.clone(),
+        program: exec_path,
+        args: vec![],
+        contents: None,
+        username: None, 
+        working_directory: Some(working_dir),
+        environment: None,
+        autostart: true,
+        restart_policy: service_manager::RestartPolicy::Always { delay_secs: Some(10) },
+    })?;
+    
+    println!("Service 'roam-client' installed successfully.");
+    println!("You can now start it with: roam-client start (or systemctl start roam-client / net start roam-client)");
+    Ok(())
+}
+
+pub fn uninstall_service() -> anyhow::Result<()> {
+    let label: ServiceLabel = "roam-client".parse()?;
+    let manager = <dyn ServiceManager>::native()?;
+
+    manager.uninstall(ServiceUninstallCtx {
+        label: label.clone(),
+    })?;
+
+    println!("Service 'roam-client' uninstalled successfully.");
+    Ok(())
+}
+
+pub fn start_service() -> anyhow::Result<()> {
+     let label: ServiceLabel = "roam-client".parse()?;
+     let manager = <dyn ServiceManager>::native()?;
+     
+     manager.start(ServiceStartCtx {
+         label: label.clone(),
+     })?;
+     println!("Service 'roam-client' started.");
+     Ok(())
+}
+
+pub fn stop_service() -> anyhow::Result<()> {
+     let label: ServiceLabel = "roam-client".parse()?;
+     let manager = <dyn ServiceManager>::native()?;
+     
+     manager.stop(ServiceStopCtx {
+         label: label.clone(),
+     })?;
+     println!("Service 'roam-client' stopped.");
+     Ok(())
+}

@@ -22,3 +22,5 @@ anyhow = "1.0"
 config = "0.15.19"
 self-replace = "1.5.0"
 dotenvy = "0.15.7"
+clap = { version = "4.5.57", features = ["derive"] }
+service-manager = "0.10.0"

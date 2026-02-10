@@ -1,6 +1,8 @@
 mod command_handler;
 mod config;
+mod service;
 
+use clap::{Parser, Subcommand};
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message as WsMessage};
 use url::Url;
@@ -14,8 +16,33 @@ use std::path::Path;
 use common::Message;
 use crate::config::ClientConfig;
 
+#[derive(Parser)]
+#[command(name = "roam-client")]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    Install,
+    Uninstall,
+    Start,
+    Stop,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Some(Commands::Install) => return service::install_service(),
+        Some(Commands::Uninstall) => return service::uninstall_service(),
+        Some(Commands::Start) => return service::start_service(),
+        Some(Commands::Stop) => return service::stop_service(),
+        None => {}
+    }
+
     // Load .env file
     dotenvy::dotenv().ok();
     // Also try loading from client/.env if running from workspace root
