@@ -1,0 +1,56 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT h.id, s.name as script_name, c.hostname as client_hostname, h.status, CAST(h.started_at AS TEXT) as started_at, CAST(h.completed_at AS TEXT) as completed_at, h.logs\n        FROM execution_history h\n        JOIN scripts s ON h.script_id = s.id\n        LEFT JOIN clients c ON h.client_id = c.id\n        ORDER BY h.started_at DESC\n        LIMIT 50\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "script_name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "client_hostname",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "status",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "started_at",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "completed_at",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "logs",
+        "ordinal": 6,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "0515b2de2ed11c48dccb27a6722b4f3b0dd9451c0c9c99182114aeb0568819ae"
+}

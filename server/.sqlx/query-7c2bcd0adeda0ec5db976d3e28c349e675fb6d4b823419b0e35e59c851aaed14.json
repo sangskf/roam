@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO clients (id, hostname, os, last_seen, status) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?)\n                 ON CONFLICT(id) DO UPDATE SET hostname = excluded.hostname, os = excluded.os, last_seen = CURRENT_TIMESTAMP, status = excluded.status",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "7c2bcd0adeda0ec5db976d3e28c349e675fb6d4b823419b0e35e59c851aaed14"
+}

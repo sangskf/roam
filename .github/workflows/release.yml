@@ -1,0 +1,87 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  SQLX_OFFLINE: true
+
+jobs:
+  build:
+    name: Build - ${{ matrix.platform.name }}
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      matrix:
+        platform:
+          - os: ubuntu-latest
+            name: linux-x86_64
+            target: x86_64-unknown-linux-gnu
+            ext: ""
+          - os: windows-latest
+            name: windows-x86_64
+            target: x86_64-pc-windows-msvc
+            ext: ".exe"
+          - os: macos-latest
+            name: macos-x86_64
+            target: x86_64-apple-darwin
+            ext: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.target }}
+
+      # Linux dependencies
+      - name: Install Linux dependencies
+        if: matrix.platform.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.platform.target }}
+
+      - name: Prepare Package
+        shell: bash
+        run: |
+          mkdir -p package/server/web
+          
+          # Copy binaries
+          cp target/${{ matrix.platform.target }}/release/client${{ matrix.platform.ext }} package/
+          cp target/${{ matrix.platform.target }}/release/server${{ matrix.platform.ext }} package/
+          
+          # Copy Web Assets (Required for Server)
+          cp -r server/web/* package/server/web/
+          
+          # Copy Example Configs (Optional but helpful)
+          # cp server/.env package/server/.env.example
+          # cp client/.env package/client/.env.example
+          
+          # Copy README
+          cp README.md package/
+
+      - name: Create Archive
+        shell: bash
+        run: |
+          cd package
+          if [ "${{ matrix.platform.os }}" == "windows-latest" ]; then
+            7z a ../roam-${{ matrix.platform.name }}.zip *
+          else
+            tar czvf ../roam-${{ matrix.platform.name }}.tar.gz *
+          fi
+          cd ..
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            roam-${{ matrix.platform.name }}.zip
+            roam-${{ matrix.platform.name }}.tar.gz

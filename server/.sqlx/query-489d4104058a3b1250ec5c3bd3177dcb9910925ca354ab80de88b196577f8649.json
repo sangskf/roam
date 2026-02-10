@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO execution_history (id, script_id, client_id, status) VALUES (?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "489d4104058a3b1250ec5c3bd3177dcb9910925ca354ab80de88b196577f8649"
+}
