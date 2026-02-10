@@ -28,10 +28,98 @@ pub async fn init_db(db_url: &str) -> anyhow::Result<Pool<Sqlite>> {
             last_seen DATETIME NOT NULL,
             status TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS scripts (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            steps TEXT NOT NULL, -- JSON
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS execution_history (
+            id TEXT PRIMARY KEY,
+            script_id TEXT NOT NULL,
+            client_id TEXT NOT NULL,
+            status TEXT NOT NULL, -- 'running', 'completed', 'failed'
+            started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            completed_at DATETIME,
+            logs TEXT -- JSON array of log entries
+        );
         "#,
     )
     .execute(&pool)
     .await?;
+
+    // Seed example scripts if table is empty
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scripts")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0);
+
+    if count == 0 {
+        tracing::info!("Seeding example scripts...");
+        
+        // 1. Example: System Health Check
+        let steps1 = serde_json::json!([
+            {
+                "type": "Shell",
+                "payload": { "cmd": "uname", "args": ["-a"] }
+            },
+            {
+                "type": "Shell",
+                "payload": { "cmd": "df", "args": ["-h"] }
+            },
+            {
+                "type": "Shell",
+                "payload": { "cmd": "free", "args": ["-m"] }
+            }
+        ]).to_string();
+        
+        let id1 = uuid::Uuid::new_v4().to_string();
+        let _ = sqlx::query!(
+            "INSERT INTO scripts (id, name, steps) VALUES (?, ?, ?)",
+            id1,
+            "Example: System Health Check",
+            steps1
+        ).execute(&pool).await;
+
+        // 2. Example: Fetch System Logs
+        let steps2 = serde_json::json!([
+            {
+                "type": "Download",
+                "payload": { "remote_path": "/var/log/syslog" }
+            }
+        ]).to_string();
+
+        let id2 = uuid::Uuid::new_v4().to_string();
+        let _ = sqlx::query!(
+            "INSERT INTO scripts (id, name, steps) VALUES (?, ?, ?)",
+            id2,
+            "Example: Fetch System Logs (Linux)",
+            steps2
+        ).execute(&pool).await;
+
+        // 3. Example: Deploy Config File
+        // Note: This assumes 'example.conf' exists in server staging area. 
+        // We'll just add the step as an example.
+        let steps3 = serde_json::json!([
+            {
+                "type": "Upload",
+                "payload": { 
+                    "local_path": "example.conf", 
+                    "remote_path": "/tmp/example.conf" 
+                }
+            }
+        ]).to_string();
+
+        let id3 = uuid::Uuid::new_v4().to_string();
+        let _ = sqlx::query!(
+            "INSERT INTO scripts (id, name, steps) VALUES (?, ?, ?)",
+            id3,
+            "Example: Deploy Config",
+            steps3
+        ).execute(&pool).await;
+    }
 
     Ok(pool)
 }

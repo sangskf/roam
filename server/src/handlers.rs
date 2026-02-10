@@ -2,22 +2,301 @@ use axum::{
     extract::{ws::{Message as WsMessage, WebSocket, WebSocketUpgrade}, State, Json, Path, ConnectInfo, Multipart},
     response::IntoResponse,
     http::{StatusCode, HeaderMap},
-    body::Body,
 };
 use futures::{sink::SinkExt, stream::StreamExt};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 use tracing::{info, error, warn};
 use std::net::SocketAddr;
 
-use crate::state::{AppState, ClientConnection};
-use common::{Message, CommandPayload};
+use crate::state::{AppState, ClientConnection, ScriptGroup, ScriptStep};
+use common::{Message, CommandPayload, CommandResult};
 
 pub async fn index() -> &'static str {
     "Roam Server Running"
+}
+
+// API: List Scripts
+pub async fn list_scripts(State(state): State<Arc<AppState>>) -> Json<Vec<ScriptGroup>> {
+    let rows = sqlx::query!("SELECT id, name, steps FROM scripts ORDER BY created_at DESC")
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+
+    let scripts = rows.into_iter().map(|r| {
+        let steps: Vec<ScriptStep> = serde_json::from_str(&r.steps).unwrap_or_default();
+        ScriptGroup {
+            id: Uuid::parse_str(r.id.as_deref().unwrap_or("")).unwrap_or_default(),
+            name: r.name,
+            steps,
+        }
+    }).collect();
+    Json(scripts)
+}
+
+// API: Create Script
+#[derive(serde::Deserialize)]
+pub struct CreateScriptRequest {
+    pub name: String,
+    pub steps: Vec<ScriptStep>,
+}
+
+pub async fn create_script(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CreateScriptRequest>,
+) -> impl IntoResponse {
+    let id = Uuid::new_v4();
+    let id_str = id.to_string();
+    let name = &payload.name;
+    let steps_json = serde_json::to_string(&payload.steps).unwrap_or("[]".to_string());
+    
+    if let Err(e) = sqlx::query!(
+        "INSERT INTO scripts (id, name, steps) VALUES (?, ?, ?)",
+        id_str, name, steps_json
+    ).execute(&state.db).await {
+         return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create script: {}", e)).into_response();
+    }
+    
+    (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
+}
+
+// API: Update Script
+pub async fn update_script(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<CreateScriptRequest>,
+) -> impl IntoResponse {
+    let id_str = id.to_string();
+    let name = &payload.name;
+    let steps_json = serde_json::to_string(&payload.steps).unwrap_or("[]".to_string());
+    
+    if let Err(e) = sqlx::query!(
+        "UPDATE scripts SET name = ?, steps = ? WHERE id = ?",
+        name, steps_json, id_str
+    ).execute(&state.db).await {
+         return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to update script: {}", e)).into_response();
+    }
+    
+    (StatusCode::OK, "Script updated").into_response()
+}
+
+// API: Delete Script
+pub async fn delete_script(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    let id_str = id.to_string();
+    if let Err(e) = sqlx::query!(
+        "DELETE FROM scripts WHERE id = ?",
+        id_str
+    ).execute(&state.db).await {
+         return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to delete script: {}", e)).into_response();
+    }
+    
+    (StatusCode::OK, "Script deleted").into_response()
+}
+
+// API: Run Script on Multiple Clients
+#[derive(serde::Deserialize)]
+pub struct RunScriptRequest {
+    pub client_ids: Vec<Uuid>,
+}
+
+pub async fn run_script(
+    State(state): State<Arc<AppState>>,
+    Path(script_id): Path<Uuid>,
+    Json(payload): Json<RunScriptRequest>,
+) -> impl IntoResponse {
+    let script_id_str = script_id.to_string();
+    // Fetch script from DB
+    let row = match sqlx::query!("SELECT name, steps FROM scripts WHERE id = ?", script_id_str)
+        .fetch_optional(&state.db)
+        .await {
+            Ok(Some(r)) => r,
+            Ok(None) => return (StatusCode::NOT_FOUND, "Script not found").into_response(),
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("DB Error: {}", e)).into_response(),
+        };
+
+    let steps: Vec<ScriptStep> = serde_json::from_str(&row.steps).unwrap_or_default();
+    let script = ScriptGroup {
+        id: script_id,
+        name: row.name,
+        steps,
+    };
+
+    // For each client, create execution history and spawn task
+    for client_id in payload.client_ids {
+        if !state.clients.contains_key(&client_id) {
+            continue; // Skip offline/invalid clients
+        }
+        
+        let history_id = Uuid::new_v4();
+        let history_id_str = history_id.to_string();
+        let script_id_str_run = script_id.to_string();
+        let client_id_str = client_id.to_string();
+        
+        // Insert history record
+        if let Err(e) = sqlx::query!(
+            "INSERT INTO execution_history (id, script_id, client_id, status) VALUES (?, ?, ?, ?)",
+            history_id_str, script_id_str_run, client_id_str, "running"
+        ).execute(&state.db).await {
+            error!("Failed to create history record: {}", e);
+            continue;
+        }
+
+        let state_clone = state.clone();
+        let script_clone = script.clone();
+        tokio::spawn(async move {
+            run_script_task(state_clone, client_id, script_clone, history_id).await;
+        });
+    }
+
+    (StatusCode::OK, "Script execution started on selected clients").into_response()
+}
+
+async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGroup, history_id: Uuid) {
+    info!("Starting script {} on client {}", script.name, client_id);
+    let mut logs = Vec::new();
+    let mut success = true;
+
+    for (i, step) in script.steps.iter().enumerate() {
+        let cmd_payload = match step {
+            ScriptStep::Shell { cmd, args } => CommandPayload::ShellExec { cmd: cmd.clone(), args: args.clone() },
+            ScriptStep::Upload { local_path, remote_path } => {
+                let host = format!("{}:{}", state.config.host, state.config.port);
+                let download_url = format!("http://{}/api/files/download/staging/{}", host, local_path);
+                CommandPayload::DownloadFile { url: download_url, dest_path: remote_path.clone() }
+            },
+            ScriptStep::Download { remote_path } => {
+                let upload_id = Uuid::new_v4();
+                let host = format!("{}:{}", state.config.host, state.config.port);
+                let upload_url = format!("http://{}/api/files/client-upload/{}", host, upload_id);
+                CommandPayload::UploadFile { src_path: remote_path.clone(), upload_url }
+            }
+        };
+        
+        logs.push(format!("Step {}: Started", i + 1));
+        
+        // Send command
+        if let Some(client) = state.clients.get(&client_id) {
+            let cmd_id = Uuid::new_v4();
+            let msg = Message::Command {
+                id: cmd_id,
+                cmd: cmd_payload,
+            };
+            
+            if let Err(e) = client.tx.send(msg).await {
+                logs.push(format!("Step {}: Failed to send command: {}", i + 1, e));
+                success = false;
+                break;
+            }
+            
+            // Wait for result
+            let mut step_success = false;
+            for _ in 0..60 { // Wait up to 30s
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                if let Some(result) = state.results.get(&cmd_id) {
+                     match result.value() {
+                         CommandResult::Error(e) => {
+                             logs.push(format!("Step {}: Failed: {}", i + 1, e));
+                         },
+                         CommandResult::ShellOutput { stdout, stderr, exit_code } => {
+                             if *exit_code != 0 {
+                                 logs.push(format!("Step {}: Shell command failed (Exit Code: {}). Stderr: {}", i + 1, exit_code, stderr));
+                             } else {
+                                 logs.push(format!("Step {}: Completed. Output: {}", i + 1, stdout));
+                                 step_success = true;
+                             }
+                         },
+                         res => {
+                             logs.push(format!("Step {}: Completed. Result: {:?}", i + 1, res));
+                             step_success = true;
+                         }
+                     }
+                     break;
+                }
+            }
+            
+            if !step_success {
+                logs.push(format!("Step {}: Timed out or failed", i + 1));
+                success = false;
+                break;
+            }
+            
+        } else {
+            logs.push("Client disconnected".to_string());
+            success = false;
+            break;
+        }
+    }
+    
+    let status = if success { "completed" } else { "failed" };
+    let logs_json = serde_json::to_string(&logs).unwrap_or("[]".to_string());
+    let history_id_str = history_id.to_string();
+    
+    // Update history
+    let _ = sqlx::query!(
+        "UPDATE execution_history SET status = ?, completed_at = CURRENT_TIMESTAMP, logs = ? WHERE id = ?",
+        status, logs_json, history_id_str
+    ).execute(&state.db).await;
+    
+    info!("Script {} finished on client {} with status {}", script.name, client_id, status);
+}
+
+// API: Get Execution History
+#[derive(serde::Serialize)]
+pub struct ExecutionHistoryItem {
+    pub id: Uuid,
+    pub script_name: String,
+    pub client_hostname: String,
+    pub status: String,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+    pub logs: Vec<String>,
+}
+
+pub async fn get_script_history(
+    State(state): State<Arc<AppState>>,
+) -> Json<Vec<ExecutionHistoryItem>> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT h.id, s.name as script_name, c.hostname as client_hostname, h.status, CAST(h.started_at AS TEXT) as started_at, CAST(h.completed_at AS TEXT) as completed_at, h.logs
+        FROM execution_history h
+        JOIN scripts s ON h.script_id = s.id
+        LEFT JOIN clients c ON h.client_id = c.id
+        ORDER BY h.started_at DESC
+        LIMIT 50
+        "#
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let history = rows.into_iter().map(|r| {
+        let logs: Vec<String> = r.logs.as_deref().and_then(|l| serde_json::from_str(l).ok()).unwrap_or_default();
+        ExecutionHistoryItem {
+            id: Uuid::parse_str(r.id.as_deref().unwrap_or("")).unwrap_or_default(),
+            script_name: r.script_name,
+            client_hostname: r.client_hostname.unwrap_or("Unknown".to_string()),
+            status: r.status,
+            started_at: r.started_at.unwrap_or_default(),
+            completed_at: r.completed_at,
+            logs,
+        }
+    }).collect();
+    Json(history)
+}
+
+// API: Clear Execution History
+pub async fn clear_script_history(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    if let Err(e) = sqlx::query!("DELETE FROM execution_history").execute(&state.db).await {
+         return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to clear history: {}", e)).into_response();
+    }
+    (StatusCode::OK, "History cleared").into_response()
 }
 
 // API: Admin uploads file to Staging (to be downloaded by Client)
@@ -206,6 +485,17 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, addr: SocketAddr
             version = v;
             
             info!("Client registered: {} ({}) - {} [Alias: {:?}] [IP: {}] [Ver: {}]", client_id, hostname, os, alias, addr, version);
+            
+            // Persist client to DB for history joins
+            let client_id_str = client_id.to_string();
+            if let Err(e) = sqlx::query!(
+                "INSERT INTO clients (id, hostname, os, last_seen, status) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?)
+                 ON CONFLICT(id) DO UPDATE SET hostname = excluded.hostname, os = excluded.os, last_seen = CURRENT_TIMESTAMP, status = excluded.status",
+                client_id_str, hostname, os, "connected"
+            ).execute(&state.db).await {
+                error!("Failed to persist client to DB: {}", e);
+            }
+
             let _ = sender.send(WsMessage::Text(serde_json::to_string(&Message::AuthSuccess).unwrap())).await;
         }
         _ => {

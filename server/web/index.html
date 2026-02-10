@@ -8,48 +8,120 @@
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
 </head>
 <body class="bg-gray-100 text-gray-800 font-sans">
-    <div id="app" class="min-h-screen p-6">
-        <header class="mb-8 flex justify-between items-center">
-            <div>
-                <h1 class="text-3xl font-bold text-blue-600">{{ t('dashboardTitle') }}</h1>
-                <p class="text-gray-600">{{ t('connectedClients') }}: {{ clients.length }}</p>
+    <div id="app" class="min-h-screen p-6 flex flex-col">
+        <header class="mb-6 flex justify-between items-center bg-white p-4 rounded shadow-sm">
+            <div class="flex items-center gap-6">
+                <h1 class="text-2xl font-bold text-blue-600">{{ t('dashboardTitle') }}</h1>
+                <nav class="flex gap-2">
+                    <button @click="currentView = 'dashboard'" :class="['px-3 py-1 rounded transition', currentView === 'dashboard' ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-600 hover:bg-gray-100']">{{ t('dashboard') }}</button>
+                    <button @click="currentView = 'scripts'; fetchScripts()" :class="['px-3 py-1 rounded transition', currentView === 'scripts' ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-600 hover:bg-gray-100']">{{ t('scripts') }}</button>
+                    <button @click="currentView = 'history'; fetchHistory()" :class="['px-3 py-1 rounded transition', currentView === 'history' ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-600 hover:bg-gray-100']">{{ t('history') }}</button>
+                </nav>
             </div>
-            <button @click="toggleLang" class="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded text-sm font-medium">
-                {{ t('switchLang') }}
-            </button>
+            <div class="flex items-center gap-4">
+                <span class="text-sm text-gray-500">{{ t('connectedClients') }}: {{ clients.length }}</span>
+                <button @click="toggleLang" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded text-xs font-medium">
+                    {{ t('switchLang') }}
+                </button>
+            </div>
         </header>
 
-        <!-- Client List -->
-        <div class="bg-white rounded-lg shadow-md overflow-hidden">
+        <!-- Dashboard View -->
+        <div v-if="currentView === 'dashboard'" class="bg-white rounded-lg shadow-md overflow-hidden flex-1">
             <table class="w-full text-left border-collapse">
                 <thead>
-                    <tr class="bg-gray-200 text-gray-700">
-                        <th class="p-4 border-b">{{ t('alias') }}</th>
-                        <th class="p-4 border-b">{{ t('hostname') }}</th>
-                        <th class="p-4 border-b">{{ t('ipAddress') }}</th>
-                        <th class="p-4 border-b">{{ t('os') }}</th>
-                        <th class="p-4 border-b">{{ t('version') }}</th>
-                        <th class="p-4 border-b">{{ t('id') }}</th>
+                    <tr class="bg-gray-50 text-gray-700 text-sm">
+                        <th class="p-4 border-b w-1/6">{{ t('alias') }}</th>
+                        <th class="p-4 border-b w-1/6">{{ t('hostname') }}</th>
+                        <th class="p-4 border-b w-1/6">{{ t('ipAddress') }}</th>
+                        <th class="p-4 border-b w-1/6">{{ t('os') }}</th>
+                        <th class="p-4 border-b w-1/6">{{ t('version') }}</th>
                         <th class="p-4 border-b">{{ t('actions') }}</th>
                     </tr>
                 </thead>
-                <tbody>
-                    <tr v-for="client in clients" :key="client.id" class="hover:bg-gray-50 border-b last:border-b-0">
+                <tbody class="text-sm">
+                    <tr v-for="client in clients" :key="client.id" class="hover:bg-blue-50 border-b last:border-b-0 transition-colors">
                         <td class="p-4 font-medium">{{ client.alias || '-' }}</td>
                         <td class="p-4">{{ client.hostname }}</td>
-                        <td class="p-4 font-mono text-sm">{{ client.ip }}</td>
+                        <td class="p-4 font-mono text-gray-500">{{ client.ip }}</td>
                         <td class="p-4">{{ client.os }}</td>
-                        <td class="p-4 font-mono text-sm">{{ client.version }}</td>
-                        <td class="p-4 text-xs text-gray-400 font-mono" :title="client.id">{{ client.id.substring(0, 8) }}...</td>
+                        <td class="p-4 font-mono text-gray-500">{{ client.version }}</td>
                         <td class="p-4 flex gap-2">
-                            <button @click="openHardware(client)" class="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-sm transition">{{ t('hardware') }}</button>
-                            <button @click="openShell(client)" class="bg-gray-800 hover:bg-gray-900 text-white px-3 py-1 rounded text-sm transition">{{ t('shell') }}</button>
-                            <button @click="openFiles(client)" class="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded text-sm transition">{{ t('files') }}</button>
-                            <button @click="openUpdate(client)" class="bg-orange-500 hover:bg-orange-600 text-white px-3 py-1 rounded text-sm transition">{{ t('update') }}</button>
+                            <button @click="openHardware(client)" class="text-green-600 hover:bg-green-100 px-2 py-1 rounded border border-green-200 whitespace-nowrap">{{ t('hardware') }}</button>
+                            <button @click="openShell(client)" class="text-gray-700 hover:bg-gray-100 px-2 py-1 rounded border border-gray-300 whitespace-nowrap">{{ t('shell') }}</button>
+                            <button @click="openFiles(client)" class="text-blue-600 hover:bg-blue-100 px-2 py-1 rounded border border-blue-200 whitespace-nowrap">{{ t('files') }}</button>
+                            <button @click="openUpdate(client)" class="text-orange-600 hover:bg-orange-100 px-2 py-1 rounded border border-orange-200 whitespace-nowrap">{{ t('update') }}</button>
                         </td>
                     </tr>
                     <tr v-if="clients.length === 0">
-                        <td colspan="7" class="p-8 text-center text-gray-500">{{ t('noClients') }}</td>
+                        <td colspan="6" class="p-12 text-center text-gray-400 italic">{{ t('noClients') }}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Scripts View -->
+        <div v-if="currentView === 'scripts'" class="bg-white rounded-lg shadow-md p-6 flex-1 flex flex-col">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-xl font-bold">{{ t('scriptManager') }}</h2>
+                <button @click="openScriptEditor()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow-sm flex items-center gap-2">
+                    <span>+</span> {{ t('createScript') }}
+                </button>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div v-for="script in scriptList" :key="script.id" class="border rounded-lg p-4 hover:shadow-md transition bg-gray-50 flex flex-col">
+                    <div class="flex justify-between items-start mb-2">
+                        <h3 class="font-bold text-lg text-gray-800">{{ script.name }}</h3>
+                        <div class="flex gap-1">
+                            <button @click="openScriptEditor(script)" class="text-gray-500 hover:text-blue-600 p-1" title="Edit">✎</button>
+                            <button @click="deleteScript(script.id)" class="text-gray-500 hover:text-red-600 p-1" title="Delete">🗑</button>
+                        </div>
+                    </div>
+                    <div class="text-sm text-gray-500 mb-4 flex-1">
+                        {{ script.steps.length }} {{ t('steps') }}
+                    </div>
+                    <button @click="openRunScript(script)" class="w-full bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 py-2 rounded font-medium transition">
+                        {{ t('runScript') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- History View -->
+        <div v-if="currentView === 'history'" class="bg-white rounded-lg shadow-md overflow-hidden flex-1">
+             <div class="p-4 border-b flex justify-between items-center bg-gray-50">
+                <h2 class="font-bold text-lg">{{ t('executionHistory') }}</h2>
+                <div class="flex gap-2">
+                    <button @click="clearHistory" class="text-red-600 text-sm hover:underline">{{ t('clearLogs') }}</button>
+                    <button @click="fetchHistory" class="text-blue-600 text-sm hover:underline">{{ t('refresh') }}</button>
+                </div>
+            </div>
+            <table class="w-full text-left border-collapse text-sm">
+                <thead>
+                    <tr class="bg-gray-50 text-gray-700">
+                        <th class="p-3 border-b">{{ t('time') }}</th>
+                        <th class="p-3 border-b">{{ t('scriptName') }}</th>
+                        <th class="p-3 border-b">{{ t('client') }}</th>
+                        <th class="p-3 border-b">{{ t('status') }}</th>
+                        <th class="p-3 border-b">{{ t('logs') }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-for="item in historyList" :key="item.id" class="border-b hover:bg-gray-50">
+                        <td class="p-3 font-mono text-xs text-gray-500">{{ new Date(item.started_at).toLocaleString() }}</td>
+                        <td class="p-3 font-medium">{{ item.script_name }}</td>
+                        <td class="p-3">{{ item.client_hostname }}</td>
+                        <td class="p-3">
+                            <span :class="{'px-2 py-0.5 rounded-full text-xs font-bold': true, 
+                                'bg-green-100 text-green-700': item.status === 'completed',
+                                'bg-red-100 text-red-700': item.status === 'failed',
+                                'bg-blue-100 text-blue-700': item.status === 'running'
+                            }">{{ item.status }}</span>
+                        </td>
+                        <td class="p-3">
+                            <button @click="viewLogs(item)" class="text-blue-600 hover:underline text-xs">View Logs</button>
+                        </td>
                     </tr>
                 </tbody>
             </table>
@@ -58,7 +130,7 @@
         <!-- Modals -->
         
         <!-- Hardware Info Modal -->
-        <div v-if="activeModal === 'hardware'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+        <div v-if="activeModal === 'hardware'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div class="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
                 <h3 class="text-xl font-bold mb-4">{{ t('hardwareInfo') }}: {{ selectedClient?.hostname }}</h3>
                 <div v-if="commandLoading" class="text-center py-4">{{ t('loading') }}</div>
@@ -88,22 +160,27 @@
         </div>
 
         <!-- Shell Modal -->
-        <div v-if="activeModal === 'shell'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+        <div v-if="activeModal === 'shell'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div class="bg-white rounded-lg shadow-lg flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full md:w-1/2 h-[600px]'">
                 <div class="flex justify-between items-center p-6 pb-2">
                     <h3 class="text-xl font-bold">{{ t('remoteShell') }}: {{ selectedClient?.hostname }}</h3>
                     <div class="flex gap-2">
+                         <button @click="triggerShellUpload" class="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-sm flex items-center gap-1">
+                            <span>⬆</span> {{ t('upload') }}
+                         </button>
                          <button @click="toggleMaximize" class="text-gray-500 hover:text-gray-700">
                             <span v-if="isMaximized">{{ t('restore') }}</span>
                             <span v-else>{{ t('maximize') }}</span>
                         </button>
                     </div>
                 </div>
-                <div class="flex-1 bg-gray-900 text-green-400 p-4 mx-6 mb-4 rounded font-mono text-sm overflow-auto whitespace-pre-wrap">{{ shellOutput }}</div>
+                <div ref="shellOutputRef" class="flex-1 bg-gray-900 text-green-400 p-4 mx-6 mb-4 rounded font-mono text-sm overflow-auto whitespace-pre-wrap">{{ shellOutput }}</div>
                 <form @submit.prevent="runShellCommand" class="flex gap-2 mx-6">
                     <input v-model="shellInput" type="text" :placeholder="t('enterCommand')" class="flex-1 border rounded px-3 py-2 font-mono" autofocus>
                     <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">{{ t('run') }}</button>
                 </form>
+                <!-- Hidden file input for shell upload -->
+                <input type="file" ref="shellFileInput" class="hidden" @change="handleShellUpload">
                 <div class="p-6 pt-2 flex justify-end">
                     <button @click="closeModal" class="text-gray-500 hover:text-gray-700 text-sm underline">{{ t('close') }}</button>
                 </div>
@@ -111,7 +188,7 @@
         </div>
 
         <!-- Files Modal -->
-        <div v-if="activeModal === 'files'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+        <div v-if="activeModal === 'files'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div class="bg-white rounded-lg shadow-lg flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full md:w-1/2 h-[600px]'">
                 <div class="flex justify-between items-center p-6 pb-2">
                     <h3 class="text-xl font-bold">{{ t('fileBrowser') }}: {{ selectedClient?.hostname }}</h3>
@@ -167,7 +244,7 @@
         </div>
 
         <!-- Editor Modal -->
-        <div v-if="activeModal === 'editor'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+        <div v-if="activeModal === 'editor'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div class="bg-white rounded-lg shadow-lg flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full md:w-1/2 h-[600px]'">
                 <div class="flex justify-between items-center p-6 pb-2">
                     <h3 class="text-xl font-bold">{{ t('viewingEditing') }}: {{ editorFile?.name }}</h3>
@@ -190,7 +267,7 @@
         </div>
 
         <!-- Update Modal -->
-        <div v-if="activeModal === 'update'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+        <div v-if="activeModal === 'update'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div class="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
                 <h3 class="text-xl font-bold mb-4">{{ t('updateClient') }}: {{ selectedClient?.hostname }}</h3>
                 <p class="text-gray-600 mb-4">{{ t('currentVersion') }}: {{ selectedClient?.version }}</p>
@@ -213,14 +290,117 @@
             </div>
         </div>
 
+        <!-- Script Editor Modal -->
+        <div v-if="activeModal === 'scriptEditor'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-3xl flex flex-col max-h-[90vh]">
+                <div class="p-6 border-b">
+                    <h3 class="text-xl font-bold">{{ isCreatingScript ? t('createScript') : t('editScript') }}</h3>
+                </div>
+                <div class="p-6 overflow-auto flex-1">
+                    <div class="mb-4">
+                        <label class="block text-sm font-bold mb-1">{{ t('scriptName') }}</label>
+                        <input v-model="newScript.name" class="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                    
+                    <div class="mb-4">
+                        <div class="flex justify-between items-center mb-2">
+                            <label class="text-sm font-bold">{{ t('steps') }}</label>
+                            <button @click="addStep" class="text-sm text-blue-600 hover:underline">+ {{ t('addStep') }}</button>
+                        </div>
+                        
+                        <div class="space-y-3">
+                            <div v-for="(step, index) in newScript.steps" :key="index" class="border rounded p-3 bg-gray-50 relative group">
+                                <button @click="removeStep(index)" class="absolute top-2 right-2 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition">✕</button>
+                                <div class="flex gap-4 mb-2">
+                                    <div class="w-1/4">
+                                        <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('stepType') }}</label>
+                                        <select v-model="step.type" class="w-full border rounded px-2 py-1 text-sm bg-white">
+                                            <option value="Shell">Shell</option>
+                                            <option value="Upload">Upload</option>
+                                            <option value="Download">Download</option>
+                                        </select>
+                                    </div>
+                                    <div class="flex-1">
+                                        <div v-if="step.type === 'Shell'">
+                                            <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('command') }}</label>
+                                            <input v-model="step.cmd" class="w-full border rounded px-2 py-1 text-sm mb-2" placeholder="e.g. ls">
+                                            <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('args') }}</label>
+                                            <input v-model="step.args" class="w-full border rounded px-2 py-1 text-sm" placeholder="e.g. -la /tmp">
+                                        </div>
+                                        <div v-if="step.type === 'Upload'">
+                                            <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('localPath') }}</label>
+                                            <input v-model="step.local_path" class="w-full border rounded px-2 py-1 text-sm mb-2" placeholder="server/uploads/staging/file.txt">
+                                            <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('remotePath') }}</label>
+                                            <input v-model="step.remote_path" class="w-full border rounded px-2 py-1 text-sm" placeholder="/tmp/file.txt">
+                                        </div>
+                                        <div v-if="step.type === 'Download'">
+                                            <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('remotePath') }}</label>
+                                            <input v-model="step.remote_path" class="w-full border rounded px-2 py-1 text-sm" placeholder="/etc/passwd">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="p-6 border-t flex justify-end gap-3">
+                    <button @click="closeModal" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">{{ t('cancel') }}</button>
+                    <button @click="saveScript" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 shadow-sm">{{ t('saveScript') }}</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Run Script Modal -->
+        <div v-if="activeModal === 'runScript'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-md">
+                <div class="p-6 border-b">
+                    <h3 class="text-xl font-bold">{{ t('runScript') }}: {{ selectedScript?.name }}</h3>
+                </div>
+                <div class="p-6 max-h-[60vh] overflow-auto">
+                    <p class="mb-4 text-sm text-gray-600">{{ t('selectClients') }}</p>
+                    <div class="space-y-2">
+                        <label v-for="client in clients" :key="client.id" class="flex items-center p-2 hover:bg-gray-50 rounded cursor-pointer border">
+                            <input type="checkbox" :value="client.id" v-model="selectedClientIds" class="mr-3 h-4 w-4 text-blue-600">
+                            <div>
+                                <div class="font-medium text-sm">{{ client.hostname }}</div>
+                                <div class="text-xs text-gray-500">{{ client.ip }}</div>
+                            </div>
+                        </label>
+                        <div v-if="clients.length === 0" class="text-center text-gray-400 py-4">{{ t('noClients') }}</div>
+                    </div>
+                </div>
+                <div class="p-6 border-t flex justify-end gap-3">
+                    <button @click="closeModal" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">{{ t('cancel') }}</button>
+                    <button @click="executeScript" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 shadow-sm" :disabled="selectedClientIds.length === 0">
+                        {{ t('startExecution') }} ({{ selectedClientIds.length }})
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Log Viewer Modal -->
+        <div v-if="activeModal === 'logs'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl flex flex-col max-h-[80vh]">
+                <div class="p-4 border-b flex justify-between items-center">
+                    <h3 class="font-bold">{{ t('executionLogs') }}</h3>
+                    <button @click="closeModal" class="text-gray-500 hover:text-gray-700">✕</button>
+                </div>
+                <div class="p-4 overflow-auto bg-gray-900 text-green-400 font-mono text-xs flex-1">
+                    <div v-for="(log, i) in selectedLogs" :key="i" class="mb-1">{{ log }}</div>
+                </div>
+            </div>
+        </div>
+
+
     </div>
 
     <script>
-        const { createApp, ref, onMounted } = Vue
+        const { createApp, ref, onMounted, watch, nextTick } = Vue
 
         createApp({
             setup() {
                 const clients = ref([])
+                const currentView = ref('dashboard')
                 const activeModal = ref(null)
                 const selectedClient = ref(null)
                 const commandLoading = ref(false)
@@ -231,6 +411,15 @@
                 // Shell
                 const shellInput = ref('')
                 const shellOutput = ref('')
+                const shellOutputRef = ref(null)
+                const shellFileInput = ref(null)
+
+                watch(shellOutput, async () => {
+                    await nextTick()
+                    if (shellOutputRef.value) {
+                        shellOutputRef.value.scrollTop = shellOutputRef.value.scrollHeight
+                    }
+                })
 
                 // Files
                 const currentPath = ref('.')
@@ -244,6 +433,18 @@
                 // Update
                 const updateUrl = ref('')
                 const updateStatus = ref(null)
+
+                // Scripts
+                const scriptList = ref([])
+                const selectedScript = ref(null)
+                const isCreatingScript = ref(false)
+                const newScript = ref({ name: '', steps: [] })
+                const scriptStatus = ref(null)
+                const selectedClientIds = ref([])
+
+                // History
+                const historyList = ref([])
+                const selectedLogs = ref([])
 
                 // Layout
                 const isMaximized = ref(false)
@@ -300,7 +501,46 @@
                         cancel: 'Cancel',
                         startUpdate: 'Start Update',
                         updating: 'Updating...',
-                        switchLang: '中文'
+                        switchLang: '中文',
+                        scripts: 'Scripts',
+                        scriptManager: 'Script Manager',
+                        createScript: 'Create Script',
+                        scriptName: 'Script Name',
+                        steps: 'Steps',
+                        addStep: 'Add Step',
+                        stepType: 'Type',
+                        command: 'Command',
+                        args: 'Arguments (space separated)',
+                        localPath: 'Local Path (Server)',
+                        remotePath: 'Remote Path (Client)',
+                        remove: 'Remove',
+                        saveScript: 'Save Script',
+                        runScript: 'Run Script',
+                        selectScript: 'Select Script to Run',
+                        running: 'Running...',
+                        scriptStarted: 'Script execution started',
+                        dashboard: 'Dashboard',
+                        history: 'History',
+                        executionHistory: 'Execution History',
+                        time: 'Time',
+                        client: 'Client',
+                        logs: 'Logs',
+                        selectClients: 'Select Clients to Execute Script',
+                        startExecution: 'Start Execution',
+                        editScript: 'Edit Script',
+                        runScript: 'Run Script',
+                        stepType: 'Step Type',
+                        localPath: 'Local Path (Server)',
+                        remotePath: 'Remote Path (Client)',
+                        args: 'Arguments',
+                        cancel: 'Cancel',
+                        saveScript: 'Save Script',
+                        executionLogs: 'Execution Logs',
+                        selectClients: 'Select Clients',
+                        clearLogs: 'Clear Logs',
+                        logsCleared: 'Logs cleared successfully',
+                        refresh: 'Refresh',
+                        upload: 'Upload',
                     },
                     zh: {
                         dashboardTitle: 'Roam 控制台',
@@ -347,12 +587,56 @@
                         cancel: '取消',
                         startUpdate: '开始更新',
                         updating: '更新中...',
-                        switchLang: 'English'
+                        switchLang: 'English',
+                        scripts: '脚本组',
+                        scriptManager: '脚本组管理',
+                        createScript: '创建脚本组',
+                        scriptName: '脚本名称',
+                        steps: '步骤',
+                        addStep: '添加步骤',
+                        stepType: '类型',
+                        command: '命令',
+                        args: '参数 (空格分隔)',
+                        localPath: '本地路径 (服务端)',
+                        remotePath: '远程路径 (客户端)',
+                        remove: '移除',
+                        saveScript: '保存脚本',
+                        runScript: '运行脚本',
+                        selectScript: '选择要运行的脚本',
+                        running: '运行中...',
+                        scriptStarted: '脚本执行已开始',
+                        dashboard: '仪表盘',
+                        history: '历史记录',
+                        executionHistory: '执行历史',
+                        time: '时间',
+                        client: '客户端',
+                        logs: '日志',
+                        selectClients: '选择要执行脚本的客户端',
+                        startExecution: '开始执行',
+                        editScript: '编辑脚本',
+                        runScript: '运行脚本',
+                        stepType: '步骤类型',
+                        localPath: '本地路径 (服务端)',
+                        remotePath: '远程路径 (客户端)',
+                        args: '参数',
+                        cancel: '取消',
+                        saveScript: '保存脚本',
+                        executionLogs: '执行日志',
+                        selectClients: '选择客户端',
+                        clearLogs: '清空日志',
+                        logsCleared: '日志已清空',
+                        refresh: '刷新',
+                        upload: '上传',
                     }
                 }
 
                 const t = (key) => {
-                    return messages[lang.value][key] || key
+                    const val = messages[lang.value][key]
+                    if (!val) {
+                        // Fallback to English if translation missing
+                        return messages['en'][key] || key
+                    }
+                    return val
                 }
 
                 const toggleLang = () => {
@@ -373,7 +657,7 @@
                 onMounted(fetchClients)
 
                 const pollResult = async (cmdId) => {
-                    const maxRetries = 60; // 30 seconds
+                    const maxRetries = 600; // 5 minutes
                     for (let i = 0; i < maxRetries; i++) {
                         try {
                             const res = await fetch(`/api/commands/${cmdId}/result`);
@@ -464,6 +748,47 @@
                     }
                     
                     shellInput.value = ''
+                }
+
+                const triggerShellUpload = () => {
+                    shellFileInput.value.click()
+                }
+
+                const handleShellUpload = async (event) => {
+                    const file = event.target.files[0]
+                    if (!file) return
+                    
+                    const formData = new FormData()
+                    formData.append('file', file)
+                    
+                    shellOutput.value += `\n> Uploading ${file.name}...\n`
+                    
+                    try {
+                        const res = await fetch('/api/files/admin-upload', {
+                            method: 'POST',
+                            body: formData
+                        })
+                        if (!res.ok) throw new Error('Server upload failed')
+                        const data = await res.json()
+                        const downloadUrl = data.url
+                        
+                        // Use relative path (filename only) to upload to current shell directory
+                        const destPath = file.name
+                        const result = await sendCommand(selectedClient.value.id, {
+                            cmd_type: 'DownloadFile',
+                            args: { url: downloadUrl, dest_path: destPath }
+                        })
+                        
+                        if (result && result.status === 'Success') {
+                            shellOutput.value += `Success: File uploaded to current directory.\n`
+                        } else {
+                            throw new Error(result.data || 'Client failed to download')
+                        }
+                    } catch (e) {
+                        shellOutput.value += `Error: Upload failed: ${e.message}\n`
+                    } finally {
+                        event.target.value = ''
+                    }
                 }
 
                 const openFiles = (client) => {
@@ -614,6 +939,175 @@
                     }
                 }
 
+                const openScripts = async () => {
+                     // No-op, used by tab
+                }
+
+                const fetchScripts = async () => {
+                    try {
+                        const res = await fetch('/api/scripts')
+                        if (res.ok) {
+                            scriptList.value = await res.json()
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch scripts', e)
+                    }
+                }
+
+                const openScriptEditor = (script = null) => {
+                    activeModal.value = 'scriptEditor'
+                    if (script) {
+                        isCreatingScript.value = false
+                        selectedScript.value = script
+                        // Deep copy to avoid modifying original until saved
+                        const rawScript = JSON.parse(JSON.stringify(script))
+                        
+                        // Transform steps from payload format to flat format for UI
+                        const steps = rawScript.steps.map(s => {
+                            if (s.type === 'Shell') {
+                                return { type: 'Shell', cmd: s.payload.cmd, args: s.payload.args.join(' ') }
+                            } else if (s.type === 'Upload') {
+                                return { type: 'Upload', local_path: s.payload.local_path, remote_path: s.payload.remote_path }
+                            } else if (s.type === 'Download') {
+                                return { type: 'Download', remote_path: s.payload.remote_path }
+                            }
+                            return s
+                        })
+                        
+                        newScript.value = { name: rawScript.name, steps }
+                    } else {
+                        isCreatingScript.value = true
+                        selectedScript.value = null
+                        newScript.value = { name: '', steps: [] }
+                    }
+                }
+
+                const addStep = () => {
+                    newScript.value.steps.push({ type: 'Shell', cmd: '', args: '', local_path: '', remote_path: '' })
+                }
+
+                const removeStep = (index) => {
+                    newScript.value.steps.splice(index, 1)
+                }
+
+                const saveScript = async () => {
+                    if (!newScript.value.name) return alert('Name required')
+                    
+                    const steps = newScript.value.steps.map(s => {
+                        if (s.type === 'Shell') {
+                            return { type: 'Shell', payload: { cmd: s.cmd, args: s.args.split(' ').filter(a => a) } }
+                        } else if (s.type === 'Upload') {
+                            return { type: 'Upload', payload: { local_path: s.local_path, remote_path: s.remote_path } }
+                        } else if (s.type === 'Download') {
+                            return { type: 'Download', payload: { remote_path: s.remote_path } }
+                        }
+                        return null
+                    }).filter(s => s)
+
+                    const payload = { name: newScript.value.name, steps }
+                    
+                    try {
+                        let res;
+                        if (isCreatingScript.value) {
+                             res = await fetch('/api/scripts', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload)
+                            })
+                        } else {
+                             res = await fetch(`/api/scripts/${selectedScript.value.id}`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(payload)
+                            })
+                        }
+                        
+                        if (res.ok) {
+                            await fetchScripts()
+                            closeModal()
+                        } else {
+                            alert('Failed to save script')
+                        }
+                    } catch (e) {
+                        alert(e.message)
+                    }
+                }
+                
+                const deleteScript = async (id) => {
+                    if (!confirm('Are you sure you want to delete this script?')) return;
+                    try {
+                        const res = await fetch(`/api/scripts/${id}`, { method: 'DELETE' });
+                        if (res.ok) {
+                            await fetchScripts();
+                        } else {
+                            alert('Failed to delete script');
+                        }
+                    } catch (e) {
+                        alert(e.message);
+                    }
+                }
+
+                const openRunScript = (script) => {
+                    selectedScript.value = script
+                    selectedClientIds.value = []
+                    activeModal.value = 'runScript'
+                }
+
+                const executeScript = async () => {
+                    if (!selectedScript.value || selectedClientIds.value.length === 0) return
+                    
+                    try {
+                        const res = await fetch(`/api/scripts/${selectedScript.value.id}/run`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ client_ids: selectedClientIds.value })
+                        })
+                        
+                        if (res.ok) {
+                            alert(t('scriptStarted'))
+                            closeModal()
+                            currentView.value = 'history'
+                            fetchHistory()
+                        } else {
+                            const err = await res.text()
+                            alert('Failed to start script: ' + err)
+                        }
+                    } catch (e) {
+                        alert('Error: ' + e.message)
+                    }
+                }
+
+                const fetchHistory = async () => {
+                    try {
+                        const res = await fetch('/api/history')
+                        if (res.ok) {
+                            historyList.value = await res.json()
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch history', e)
+                    }
+                }
+
+                const clearHistory = async () => {
+                    if (!confirm(t('clearLogs') + '?')) return
+                    try {
+                        const res = await fetch('/api/history', { method: 'DELETE' })
+                        if (res.ok) {
+                            alert(t('logsCleared'))
+                            fetchHistory()
+                        } else {
+                            alert('Failed to clear logs')
+                        }
+                    } catch (e) {
+                        alert(e.message)
+                    }
+                }
+                
+                const viewLogs = (item) => {
+                    selectedLogs.value = item.logs
+                    activeModal.value = 'logs'
+                }
+
                 const openUpdate = (client) => {
                     selectedClient.value = client
                     activeModal.value = 'update'
@@ -676,12 +1170,17 @@
 
                 return {
                     clients, activeModal, selectedClient, commandLoading,
-                    hardwareInfo, shellInput, shellOutput,
+                    hardwareInfo, shellInput, shellOutput, shellFileInput, shellOutputRef,
                     currentPath, fileList, fileInput,
                     updateUrl, updateStatus,
-                    openHardware, openShell, runShellCommand, openFiles, listFiles, 
+                    openHardware, openShell, runShellCommand, triggerShellUpload, handleShellUpload,
+                    openFiles, listFiles, 
                     triggerFileUpload, handleFileUpload, downloadFromClient,
                     openEditor, closeEditor, saveFile, editorFile, editorContent,
+                    openScripts, scriptList, selectedScript, isCreatingScript, newScript, scriptStatus,
+                    openScriptEditor, saveScript, addStep, removeStep, deleteScript, openRunScript, executeScript,
+                    fetchHistory, historyList, viewLogs, selectedLogs, clearHistory,
+                    selectedClientIds, currentView, fetchScripts,
                     openUpdate, triggerUpdate,
                     closeModal, formatBytes, navigateUp, joinPath,
                     isMaximized, toggleMaximize,

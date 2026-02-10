@@ -16,6 +16,11 @@ use crate::config::ClientConfig;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Load .env file
+    dotenvy::dotenv().ok();
+    // Also try loading from client/.env if running from workspace root
+    let _ = dotenvy::from_filename("client/.env");
+
     tracing_subscriber::fmt::init();
 
     // Load Config
@@ -125,6 +130,7 @@ async fn connect_and_run(client_id: Uuid, hostname: &str, os: &str, version: &st
                              Message::Command { id, cmd } => {
                                  info!("Received command: {:?}", cmd);
                                  let result = command_handler::handle_command(cmd).await;
+                                 info!("Command execution finished. Result: {:?}", result);
                                  let response = Message::Response { id, result };
                                  let json = serde_json::to_string(&response)?;
                                  write.send(WsMessage::Text(json)).await?;
