@@ -10,6 +10,9 @@ env:
   CARGO_TERM_COLOR: always
   SQLX_OFFLINE: true
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build - ${{ matrix.platform.name }}
