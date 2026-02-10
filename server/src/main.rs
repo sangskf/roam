@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/history", get(handlers::get_script_history).delete(handlers::clear_script_history))
         .route("/ws", get(handlers::ws_handler))
         .nest_service("/", ServeDir::new("server/web"))
-        .layer(DefaultBodyLimit::max(1024 * 1024 * 1024)) // 1GB
+        .layer(DefaultBodyLimit::max(1024 * 1024 * 1024 * 2)) // 2GB
         .with_state(app_state);
 
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
