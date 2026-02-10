@@ -1,0 +1,13 @@
+# Server Configuration
+
+# Binding Host
+host = "0.0.0.0"
+
+# Binding Port
+port = 3000
+
+# Database Connection URL
+database_url = "sqlite:server.db"
+
+# Authentication Token for Clients
+auth_token = "secret-token"

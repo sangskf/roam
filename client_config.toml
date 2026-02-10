@@ -1,0 +1,13 @@
+# Client Configuration
+
+# Server WebSocket URL
+server_url = "ws://127.0.0.1:3000/ws"
+
+# Authentication Token (Must match server)
+auth_token = "secret-token"
+
+# Heartbeat Interval in Seconds
+heartbeat_interval_sec = 10
+
+# Client Alias (Optional)
+# alias = "我的MacBook"

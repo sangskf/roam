@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Roam - Remote Maintenance</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+</head>
+<body class="bg-gray-100 text-gray-800 font-sans">
+    <div id="app" class="min-h-screen p-6">
+        <header class="mb-8 flex justify-between items-center">
+            <div>
+                <h1 class="text-3xl font-bold text-blue-600">{{ t('dashboardTitle') }}</h1>
+                <p class="text-gray-600">{{ t('connectedClients') }}: {{ clients.length }}</p>
+            </div>
+            <button @click="toggleLang" class="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded text-sm font-medium">
+                {{ t('switchLang') }}
+            </button>
+        </header>
+
+        <!-- Client List -->
+        <div class="bg-white rounded-lg shadow-md overflow-hidden">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="bg-gray-200 text-gray-700">
+                        <th class="p-4 border-b">{{ t('alias') }}</th>
+                        <th class="p-4 border-b">{{ t('hostname') }}</th>
+                        <th class="p-4 border-b">{{ t('ipAddress') }}</th>
+                        <th class="p-4 border-b">{{ t('os') }}</th>
+                        <th class="p-4 border-b">{{ t('version') }}</th>
+                        <th class="p-4 border-b">{{ t('id') }}</th>
+                        <th class="p-4 border-b">{{ t('actions') }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-for="client in clients" :key="client.id" class="hover:bg-gray-50 border-b last:border-b-0">
+                        <td class="p-4 font-medium">{{ client.alias || '-' }}</td>
+                        <td class="p-4">{{ client.hostname }}</td>
+                        <td class="p-4 font-mono text-sm">{{ client.ip }}</td>
+                        <td class="p-4">{{ client.os }}</td>
+                        <td class="p-4 font-mono text-sm">{{ client.version }}</td>
+                        <td class="p-4 text-xs text-gray-400 font-mono" :title="client.id">{{ client.id.substring(0, 8) }}...</td>
+                        <td class="p-4 flex gap-2">
+                            <button @click="openHardware(client)" class="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-sm transition">{{ t('hardware') }}</button>
+                            <button @click="openShell(client)" class="bg-gray-800 hover:bg-gray-900 text-white px-3 py-1 rounded text-sm transition">{{ t('shell') }}</button>
+                            <button @click="openFiles(client)" class="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded text-sm transition">{{ t('files') }}</button>
+                            <button @click="openUpdate(client)" class="bg-orange-500 hover:bg-orange-600 text-white px-3 py-1 rounded text-sm transition">{{ t('update') }}</button>
+                        </td>
+                    </tr>
+                    <tr v-if="clients.length === 0">
+                        <td colspan="7" class="p-8 text-center text-gray-500">{{ t('noClients') }}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Modals -->
+        
+        <!-- Hardware Info Modal -->
+        <div v-if="activeModal === 'hardware'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+                <h3 class="text-xl font-bold mb-4">{{ t('hardwareInfo') }}: {{ selectedClient?.hostname }}</h3>
+                <div v-if="commandLoading" class="text-center py-4">{{ t('loading') }}</div>
+                <div v-else-if="hardwareInfo" class="space-y-3">
+                    <div class="flex justify-between border-b pb-2">
+                        <span class="text-gray-600">{{ t('platform') }}</span>
+                        <span class="font-medium">{{ hardwareInfo.platform }}</span>
+                    </div>
+                    <div class="flex justify-between border-b pb-2">
+                        <span class="text-gray-600">{{ t('cpuUsage') }}</span>
+                        <span class="font-medium">{{ hardwareInfo.cpu_usage.toFixed(2) }}%</span>
+                    </div>
+                    <div class="flex justify-between border-b pb-2">
+                        <span class="text-gray-600">{{ t('totalMemory') }}</span>
+                        <span class="font-medium">{{ formatBytes(hardwareInfo.total_memory) }}</span>
+                    </div>
+                    <div class="flex justify-between pb-2">
+                        <span class="text-gray-600">{{ t('usedMemory') }}</span>
+                        <span class="font-medium">{{ formatBytes(hardwareInfo.used_memory) }}</span>
+                    </div>
+                </div>
+                <div v-else class="text-red-500">{{ t('failedInfo') }}</div>
+                <div class="mt-6 flex justify-end">
+                    <button @click="closeModal" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded">{{ t('close') }}</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Shell Modal -->
+        <div v-if="activeModal === 'shell'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-lg shadow-lg flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full md:w-1/2 h-[600px]'">
+                <div class="flex justify-between items-center p-6 pb-2">
+                    <h3 class="text-xl font-bold">{{ t('remoteShell') }}: {{ selectedClient?.hostname }}</h3>
+                    <div class="flex gap-2">
+                         <button @click="toggleMaximize" class="text-gray-500 hover:text-gray-700">
+                            <span v-if="isMaximized">{{ t('restore') }}</span>
+                            <span v-else>{{ t('maximize') }}</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="flex-1 bg-gray-900 text-green-400 p-4 mx-6 mb-4 rounded font-mono text-sm overflow-auto whitespace-pre-wrap">{{ shellOutput }}</div>
+                <form @submit.prevent="runShellCommand" class="flex gap-2 mx-6">
+                    <input v-model="shellInput" type="text" :placeholder="t('enterCommand')" class="flex-1 border rounded px-3 py-2 font-mono" autofocus>
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">{{ t('run') }}</button>
+                </form>
+                <div class="p-6 pt-2 flex justify-end">
+                    <button @click="closeModal" class="text-gray-500 hover:text-gray-700 text-sm underline">{{ t('close') }}</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Files Modal -->
+        <div v-if="activeModal === 'files'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-lg shadow-lg flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full md:w-1/2 h-[600px]'">
+                <div class="flex justify-between items-center p-6 pb-2">
+                    <h3 class="text-xl font-bold">{{ t('fileBrowser') }}: {{ selectedClient?.hostname }}</h3>
+                    <div class="flex gap-2">
+                         <button @click="toggleMaximize" class="text-gray-500 hover:text-gray-700">
+                            <span v-if="isMaximized">{{ t('restore') }}</span>
+                            <span v-else>{{ t('maximize') }}</span>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="flex gap-2 mb-4 mx-6">
+                    <input v-model="currentPath" @keyup.enter="listFiles(currentPath)" class="flex-1 border rounded px-2 py-1 text-sm font-mono bg-gray-50">
+                    <button @click="listFiles(currentPath)" class="bg-blue-500 text-white px-3 py-1 rounded text-sm">Go</button>
+                    <button @click="navigateUp" class="bg-gray-300 px-3 py-1 rounded text-sm">Up</button>
+                    <button @click="triggerFileUpload" class="bg-green-500 text-white px-3 py-1 rounded text-sm ml-auto">{{ t('uploadToClient') }}</button>
+                    <input type="file" ref="fileInput" class="hidden" @change="handleFileUpload">
+                </div>
+                
+                <div class="flex-1 overflow-auto border rounded mx-6">
+                     <div v-if="commandLoading" class="p-4 text-center text-gray-500">{{ t('loading') }}</div>
+                     <table v-else class="w-full text-sm">
+                        <thead class="bg-gray-100 sticky top-0">
+                            <tr>
+                                <th class="p-2 text-left">{{ t('name') }}</th>
+                                <th class="p-2 text-right">{{ t('size') }}</th>
+                                <th class="p-2 text-center">{{ t('type') }}</th>
+                                <th class="p-2 text-right">{{ t('action') }}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="file in fileList" :key="file.name" class="hover:bg-blue-50 cursor-pointer border-b" @click="file.is_dir ? listFiles(joinPath(currentPath, file.name)) : null">
+                                <td class="p-2 flex items-center gap-2">
+                                    <span v-if="file.is_dir" class="text-yellow-500">📁</span>
+                                    <span v-else class="text-gray-400">📄</span>
+                                    {{ file.name }}
+                                </td>
+                                <td class="p-2 text-right font-mono">{{ file.is_dir ? '-' : formatBytes(file.size) }}</td>
+                                <td class="p-2 text-center text-xs text-gray-500">{{ file.is_dir ? 'DIR' : 'FILE' }}</td>
+                                <td class="p-2 text-right">
+                                    <button v-if="!file.is_dir" @click.stop="downloadFromClient(file)" class="text-blue-500 hover:underline text-xs bg-white border px-2 py-0.5 rounded shadow-sm mr-2">{{ t('download') }}</button>
+                                    <button v-if="!file.is_dir" @click.stop="openEditor(file)" class="text-gray-700 hover:underline text-xs bg-white border px-2 py-0.5 rounded shadow-sm">{{ t('viewEdit') }}</button>
+                                </td>
+                            </tr>
+                        </tbody>
+                     </table>
+                </div>
+
+                <div class="p-6 pt-4 flex justify-end">
+                    <button @click="closeModal" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded">{{ t('close') }}</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Editor Modal -->
+        <div v-if="activeModal === 'editor'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-lg shadow-lg flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full md:w-1/2 h-[600px]'">
+                <div class="flex justify-between items-center p-6 pb-2">
+                    <h3 class="text-xl font-bold">{{ t('viewingEditing') }}: {{ editorFile?.name }}</h3>
+                    <div class="flex gap-2">
+                         <button @click="toggleMaximize" class="text-gray-500 hover:text-gray-700">
+                            <span v-if="isMaximized">{{ t('restore') }}</span>
+                            <span v-else>{{ t('maximize') }}</span>
+                        </button>
+                    </div>
+                </div>
+                
+                <div v-if="commandLoading" class="flex-1 flex items-center justify-center">{{ t('loading') }}</div>
+                <textarea v-else v-model="editorContent" class="flex-1 border rounded p-4 mx-6 mb-4 font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                
+                <div class="p-6 pt-0 flex justify-end gap-2">
+                    <button @click="closeEditor" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded">{{ t('closeCancel') }}</button>
+                    <button @click="saveFile" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded" :disabled="commandLoading">{{ t('saveChanges') }}</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Update Modal -->
+        <div v-if="activeModal === 'update'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+                <h3 class="text-xl font-bold mb-4">{{ t('updateClient') }}: {{ selectedClient?.hostname }}</h3>
+                <p class="text-gray-600 mb-4">{{ t('currentVersion') }}: {{ selectedClient?.version }}</p>
+                
+                <div class="mb-4">
+                    <label class="block text-gray-700 text-sm font-bold mb-2">{{ t('updateUrl') }}</label>
+                    <input v-model="updateUrl" type="text" placeholder="http://example.com/client.exe" class="w-full border rounded px-3 py-2">
+                </div>
+
+                <div v-if="updateStatus" class="mb-4 p-3 rounded text-sm" :class="updateStatus.type === 'error' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'">
+                    {{ updateStatus.message }}
+                </div>
+
+                <div class="flex justify-end gap-2">
+                    <button @click="closeModal" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded">{{ t('cancel') }}</button>
+                    <button @click="triggerUpdate" class="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded" :disabled="commandLoading">
+                        {{ commandLoading ? t('updating') : t('startUpdate') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const { createApp, ref, onMounted } = Vue
+
+        createApp({
+            setup() {
+                const clients = ref([])
+                const activeModal = ref(null)
+                const selectedClient = ref(null)
+                const commandLoading = ref(false)
+                
+                // Hardware Info
+                const hardwareInfo = ref(null)
+
+                // Shell
+                const shellInput = ref('')
+                const shellOutput = ref('')
+
+                // Files
+                const currentPath = ref('.')
+                const fileList = ref([])
+                const fileInput = ref(null)
+                
+                // Editor
+                const editorFile = ref(null)
+                const editorContent = ref('')
+
+                // Update
+                const updateUrl = ref('')
+                const updateStatus = ref(null)
+
+                // Layout
+                const isMaximized = ref(false)
+                
+                const toggleMaximize = () => {
+                    isMaximized.value = !isMaximized.value
+                }
+
+                // I18n
+                const lang = ref('en')
+                const messages = {
+                    en: {
+                        dashboardTitle: 'Roam Dashboard',
+                        connectedClients: 'Connected Clients',
+                        alias: 'Alias',
+                        hostname: 'Hostname',
+                        ipAddress: 'IP Address',
+                        os: 'OS',
+                        version: 'Version',
+                        id: 'ID',
+                        actions: 'Actions',
+                        noClients: 'No clients connected.',
+                        hardware: 'Hardware',
+                        shell: 'Shell',
+                        files: 'Files',
+                        update: 'Update',
+                        hardwareInfo: 'Hardware Info',
+                        loading: 'Loading...',
+                        platform: 'Platform',
+                        cpuUsage: 'CPU Usage',
+                        totalMemory: 'Total Memory',
+                        usedMemory: 'Used Memory',
+                        failedInfo: 'Failed to fetch info or no data yet',
+                        close: 'Close',
+                        remoteShell: 'Remote Shell',
+                        maximize: 'Maximize',
+                        restore: 'Restore',
+                        enterCommand: 'Enter command (e.g. ls -la)',
+                        run: 'Run',
+                        fileBrowser: 'File Browser',
+                        uploadToClient: 'Upload to Client',
+                        name: 'Name',
+                        size: 'Size',
+                        type: 'Type',
+                        action: 'Action',
+                        download: 'Download',
+                        viewEdit: 'View/Edit',
+                        viewingEditing: 'Viewing/Editing',
+                        closeCancel: 'Close/Cancel',
+                        saveChanges: 'Save Changes',
+                        updateClient: 'Update Client',
+                        currentVersion: 'Current Version',
+                        updateUrl: 'Update URL',
+                        cancel: 'Cancel',
+                        startUpdate: 'Start Update',
+                        updating: 'Updating...',
+                        switchLang: '中文'
+                    },
+                    zh: {
+                        dashboardTitle: 'Roam 控制台',
+                        connectedClients: '已连接客户端',
+                        alias: '别名',
+                        hostname: '主机名',
+                        ipAddress: 'IP 地址',
+                        os: '操作系统',
+                        version: '版本',
+                        id: 'ID',
+                        actions: '操作',
+                        noClients: '暂无客户端连接',
+                        hardware: '硬件信息',
+                        shell: '终端',
+                        files: '文件管理',
+                        update: '更新',
+                        hardwareInfo: '硬件信息',
+                        loading: '加载中...',
+                        platform: '平台',
+                        cpuUsage: 'CPU 使用率',
+                        totalMemory: '总内存',
+                        usedMemory: '已用内存',
+                        failedInfo: '获取信息失败或暂无数据',
+                        close: '关闭',
+                        remoteShell: '远程终端',
+                        maximize: '最大化',
+                        restore: '还原',
+                        enterCommand: '输入命令 (如 ls -la)',
+                        run: '运行',
+                        fileBrowser: '文件浏览',
+                        uploadToClient: '上传到客户端',
+                        name: '名称',
+                        size: '大小',
+                        type: '类型',
+                        action: '操作',
+                        download: '下载',
+                        viewEdit: '查看/编辑',
+                        viewingEditing: '正在查看/编辑',
+                        closeCancel: '关闭/取消',
+                        saveChanges: '保存更改',
+                        updateClient: '更新客户端',
+                        currentVersion: '当前版本',
+                        updateUrl: '更新链接',
+                        cancel: '取消',
+                        startUpdate: '开始更新',
+                        updating: '更新中...',
+                        switchLang: 'English'
+                    }
+                }
+
+                const t = (key) => {
+                    return messages[lang.value][key] || key
+                }
+
+                const toggleLang = () => {
+                    lang.value = lang.value === 'en' ? 'zh' : 'en'
+                }
+
+                const fetchClients = async () => {
+                    try {
+                        const res = await fetch('/api/clients')
+                        clients.value = await res.json()
+                    } catch (e) {
+                        console.error(e)
+                    }
+                }
+
+                // Polling for client list
+                setInterval(fetchClients, 5000)
+                onMounted(fetchClients)
+
+                const pollResult = async (cmdId) => {
+                    const maxRetries = 60; // 30 seconds
+                    for (let i = 0; i < maxRetries; i++) {
+                        try {
+                            const res = await fetch(`/api/commands/${cmdId}/result`);
+                            if (res.ok) {
+                                const result = await res.json();
+                                return result;
+                            }
+                        } catch (e) {}
+                        await new Promise(r => setTimeout(r, 500));
+                    }
+                    throw new Error("Command timed out");
+                };
+
+                const sendCommand = async (clientId, payload, waitForResult = true) => {
+                    commandLoading.value = true
+                    try {
+                        const res = await fetch(`/api/clients/${clientId}/command`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ cmd: payload })
+                        })
+                        if (!res.ok) throw new Error('Command failed to send')
+                        const cmdId = await res.text()
+                        
+                        if (!waitForResult) return { status: 'Sent', id: cmdId };
+
+                        // Poll for result
+                        const result = await pollResult(cmdId);
+                        
+                        // Handle Result Types
+                        if (result.status === 'Error') {
+                            throw new Error(result.data);
+                        }
+                        
+                        return result;
+                    } catch (e) {
+                        console.error(e)
+                        throw e // Propagate error
+                    } finally {
+                        commandLoading.value = false
+                    }
+                }
+
+                const openHardware = async (client) => {
+                    selectedClient.value = client
+                    activeModal.value = 'hardware'
+                    hardwareInfo.value = null
+                    try {
+                        const result = await sendCommand(client.id, { cmd_type: 'GetHardwareInfo' })
+                        if (result && result.status === 'HardwareInfo') {
+                            hardwareInfo.value = result.data
+                        }
+                    } catch (e) {
+                        // Error handled in UI via v-else
+                    }
+                }
+
+                const openShell = (client) => {
+                    selectedClient.value = client
+                    activeModal.value = 'shell'
+                    shellOutput.value = 'Ready to execute commands...'
+                    shellInput.value = ''
+                    isMaximized.value = false
+                }
+
+                const runShellCommand = async () => {
+                    if (!shellInput.value.trim()) return
+                    const cmd = shellInput.value.trim()
+                    const parts = cmd.split(' ')
+                    const command = parts[0]
+                    const args = parts.slice(1)
+                    
+                    shellOutput.value += `\n> ${cmd}\n`
+                    
+                    try {
+                        const result = await sendCommand(selectedClient.value.id, { 
+                            cmd_type: 'ShellExec', 
+                            args: { cmd: command, args: args } 
+                        })
+                        
+                        if (result && result.status === 'ShellOutput') {
+                            shellOutput.value += result.data.stdout + result.data.stderr;
+                        } else if (result && result.status === 'Error') {
+                            shellOutput.value += `Error: ${result.data}\n`;
+                        }
+                    } catch (e) {
+                        shellOutput.value += `Error: ${e.message}\n`;
+                    }
+                    
+                    shellInput.value = ''
+                }
+
+                const openFiles = (client) => {
+                    selectedClient.value = client
+                    activeModal.value = 'files'
+                    currentPath.value = '.'
+                    listFiles('.')
+                    isMaximized.value = false
+                }
+
+                const listFiles = async (path) => {
+                    currentPath.value = path
+                    fileList.value = []
+                    try {
+                        const result = await sendCommand(selectedClient.value.id, { 
+                            cmd_type: 'ListDir', 
+                            args: { path: path } 
+                        })
+                        
+                        if (result && result.status === 'FileList') {
+                            fileList.value = result.data.files.sort((a, b) => {
+                                if (a.is_dir === b.is_dir) return a.name.localeCompare(b.name);
+                                return a.is_dir ? -1 : 1;
+                            });
+                        }
+                    } catch (e) {
+                        alert(e.message)
+                    }
+                }
+
+                const triggerFileUpload = () => {
+                    fileInput.value.click()
+                }
+
+                const handleFileUpload = async (event) => {
+                    const file = event.target.files[0]
+                    if (!file) return
+                    
+                    const formData = new FormData()
+                    formData.append('file', file)
+                    
+                    commandLoading.value = true
+                    try {
+                        const res = await fetch('/api/files/admin-upload', {
+                            method: 'POST',
+                            body: formData
+                        })
+                        if (!res.ok) throw new Error('Server upload failed')
+                        const data = await res.json()
+                        const downloadUrl = data.url
+                        
+                        const destPath = joinPath(currentPath.value, file.name)
+                        const result = await sendCommand(selectedClient.value.id, {
+                            cmd_type: 'DownloadFile',
+                            args: { url: downloadUrl, dest_path: destPath }
+                        })
+                        
+                        if (result && result.status === 'Success') {
+                            alert('File uploaded to client successfully!')
+                            listFiles(currentPath.value)
+                        } else {
+                            throw new Error(result.data || 'Client failed to download')
+                        }
+                    } catch (e) {
+                        alert('Upload failed: ' + e.message)
+                    } finally {
+                        commandLoading.value = false
+                        event.target.value = ''
+                    }
+                }
+
+                const downloadFromClient = async (file) => {
+                    if (!confirm(`Download ${file.name}?`)) return
+                    
+                    try {
+                        const uploadId = crypto.randomUUID();
+                        const host = window.location.host;
+                        const uploadUrl = `http://${host}/api/files/client-upload/${uploadId}`;
+                        
+                        const srcPath = joinPath(currentPath.value, file.name);
+                        
+                        const result = await sendCommand(selectedClient.value.id, {
+                            cmd_type: 'UploadFile',
+                            args: { src_path: srcPath, upload_url: uploadUrl }
+                        });
+                        
+                        if (result && result.status === 'Success') {
+                             const serverDownloadUrl = `/api/files/download/client_data/${uploadId}/${file.name}`;
+                             window.open(serverDownloadUrl, '_blank');
+                        } else {
+                             alert('Download failed: ' + (result?.data || 'Unknown error'));
+                        }
+                        
+                    } catch (e) {
+                        alert('Download failed: ' + e.message);
+                    }
+                }
+
+                const openEditor = async (file) => {
+                    editorFile.value = file;
+                    editorContent.value = '';
+                    activeModal.value = 'editor';
+                    isMaximized.value = false;
+                    
+                    try {
+                        const filePath = joinPath(currentPath.value, file.name);
+                        const result = await sendCommand(selectedClient.value.id, {
+                            cmd_type: 'ReadFile',
+                            args: { path: filePath }
+                        });
+                        
+                        if (result && result.status === 'FileContent') {
+                            editorContent.value = result.data.content;
+                        } else {
+                            alert('Failed to read file: ' + (result?.data || 'Unknown error'));
+                            closeEditor();
+                        }
+                    } catch (e) {
+                        alert('Error opening file: ' + e.message);
+                        closeEditor();
+                    }
+                }
+
+                const closeEditor = () => {
+                    activeModal.value = 'files'; // Go back to files
+                    editorFile.value = null;
+                }
+
+                const saveFile = async () => {
+                    if (!editorFile.value) return;
+                    
+                    try {
+                        const filePath = joinPath(currentPath.value, editorFile.value.name);
+                        const result = await sendCommand(selectedClient.value.id, {
+                            cmd_type: 'WriteFile',
+                            args: { path: filePath, content: editorContent.value }
+                        });
+                        
+                        if (result && result.status === 'Success') {
+                            alert('File saved successfully!');
+                            closeEditor();
+                            listFiles(currentPath.value); // Refresh
+                        } else {
+                            alert('Failed to save file: ' + (result?.data || 'Unknown error'));
+                        }
+                    } catch (e) {
+                        alert('Error saving file: ' + e.message);
+                    }
+                }
+
+                const openUpdate = (client) => {
+                    selectedClient.value = client
+                    activeModal.value = 'update'
+                    updateUrl.value = ''
+                    updateStatus.value = null
+                }
+
+                const triggerUpdate = async () => {
+                    if (!updateUrl.value) {
+                        updateStatus.value = { type: 'error', message: 'Please enter a URL' }
+                        return
+                    }
+                    
+                    updateStatus.value = { type: 'info', message: 'Sending update command...' }
+                    
+                    try {
+                        // For update, we might not get a result back if the client restarts immediately.
+                        // So we set waitForResult to false or handle timeout gracefully.
+                        // But usually, download takes time, so we wait.
+                        // If client exits, the websocket closes, and server might not get "Success" response?
+                        // Let's try waiting. If it times out, it might mean success (client restarted).
+                        
+                        await sendCommand(selectedClient.value.id, { 
+                            cmd_type: 'UpdateClient', 
+                            args: { url: updateUrl.value } 
+                        })
+                        
+                        updateStatus.value = { type: 'success', message: 'Update command sent successfully. Client should restart.' }
+                    } catch (e) {
+                        // If timeout occurs, it's possible the client restarted during the process
+                        updateStatus.value = { type: 'error', message: `Update status unclear: ${e.message}` }
+                    }
+                }
+                
+                const navigateUp = () => {
+                     const parts = currentPath.value.split(/[/\\]/);
+                     parts.pop();
+                     const newPath = parts.join('/') || '.';
+                     listFiles(newPath);
+                }
+                
+                const joinPath = (base, part) => {
+                    if (base.endsWith('/') || base.endsWith('\\')) return base + part;
+                    return base === '.' ? part : `${base}/${part}`;
+                }
+
+                const closeModal = () => {
+                    activeModal.value = null
+                    selectedClient.value = null
+                }
+
+                const formatBytes = (bytes, decimals = 2) => {
+                    if (!+bytes) return '0 Bytes'
+                    const k = 1024
+                    const dm = decimals < 0 ? 0 : decimals
+                    const sizes = ['Bytes', 'KiB', 'MiB', 'GiB', 'TiB']
+                    const i = Math.floor(Math.log(bytes) / Math.log(k))
+                    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`
+                }
+
+                return {
+                    clients, activeModal, selectedClient, commandLoading,
+                    hardwareInfo, shellInput, shellOutput,
+                    currentPath, fileList, fileInput,
+                    updateUrl, updateStatus,
+                    openHardware, openShell, runShellCommand, openFiles, listFiles, 
+                    triggerFileUpload, handleFileUpload, downloadFromClient,
+                    openEditor, closeEditor, saveFile, editorFile, editorContent,
+                    openUpdate, triggerUpdate,
+                    closeModal, formatBytes, navigateUp, joinPath,
+                    isMaximized, toggleMaximize,
+                    t, toggleLang, lang
+                }
+            }
+        }).mount('#app')
+    </script>
+</body>
+</html>
