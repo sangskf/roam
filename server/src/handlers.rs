@@ -311,8 +311,13 @@ pub async fn upload_file_admin(
             Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to read bytes: {}", e)).into_response(),
         };
 
-        // Save to server/uploads/staging/
-        let path = format!("server/uploads/staging/{}", file_name);
+        // Save to uploads/staging/
+        let dir_path = "uploads/staging";
+        if let Err(e) = tokio::fs::create_dir_all(dir_path).await {
+             return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create directory: {}", e)).into_response();
+        }
+
+        let path = format!("{}/{}", dir_path, file_name);
         if let Err(e) = File::create(&path).await {
              return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create file: {}", e)).into_response();
         }
@@ -342,8 +347,8 @@ pub async fn upload_file_client(
             Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to read bytes: {}", e)).into_response(),
         };
 
-        // Save to server/uploads/client_data/<id>/
-        let dir_path = format!("server/uploads/client_data/{}", id);
+        // Save to uploads/client_data/<id>/
+        let dir_path = format!("uploads/client_data/{}", id);
         if let Err(_) = tokio::fs::create_dir_all(&dir_path).await {
              // ignore error if exists
         }

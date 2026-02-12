@@ -309,9 +309,11 @@ version = "0.1.5"
 dependencies = [
  "anyhow",
  "clap",
+ "codepage",
  "common",
  "config",
  "dotenvy",
+ "encoding_rs",
  "futures-util",
  "hostname",
  "reqwest",

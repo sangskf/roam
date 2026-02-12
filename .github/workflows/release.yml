@@ -63,9 +63,6 @@ jobs:
           # Copy Example Configs
           cp server/.env package/server.env.example
           cp client/.env package/client.env.example
-          
-          # Copy README
-          cp README.md package/
 
       - name: Create Archive
         shell: bash

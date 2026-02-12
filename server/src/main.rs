@@ -86,7 +86,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/commands/:id/result", get(handlers::get_command_result))
         .route("/api/files/admin-upload", post(handlers::upload_file_admin))
         .route("/api/files/client-upload/:id", post(handlers::upload_file_client))
-        .nest_service("/api/files/download", ServeDir::new("server/uploads"))
+        .nest_service("/api/files/download", ServeDir::new("uploads"))
         .route("/api/scripts", get(handlers::list_scripts).post(handlers::create_script))
         .route("/api/scripts/:id", axum::routing::put(handlers::update_script).delete(handlers::delete_script))
         .route("/api/scripts/:id/run", post(handlers::run_script))

