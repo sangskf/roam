@@ -26,7 +26,10 @@ pub async fn init_db(db_url: &str) -> anyhow::Result<Pool<Sqlite>> {
             hostname TEXT NOT NULL,
             os TEXT NOT NULL,
             last_seen DATETIME NOT NULL,
-            status TEXT NOT NULL
+            status TEXT NOT NULL,
+            alias TEXT,
+            ip TEXT,
+            version TEXT
         );
 
         CREATE TABLE IF NOT EXISTS scripts (
@@ -49,6 +52,11 @@ pub async fn init_db(db_url: &str) -> anyhow::Result<Pool<Sqlite>> {
     )
     .execute(&pool)
     .await?;
+
+    // Migration: Add columns if they don't exist (ignore errors if they do)
+    let _ = sqlx::query("ALTER TABLE clients ADD COLUMN alias TEXT").execute(&pool).await;
+    let _ = sqlx::query("ALTER TABLE clients ADD COLUMN ip TEXT").execute(&pool).await;
+    let _ = sqlx::query("ALTER TABLE clients ADD COLUMN version TEXT").execute(&pool).await;
 
     // Seed example scripts if table is empty
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scripts")

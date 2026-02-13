@@ -10,6 +10,7 @@ use tokio::fs::File;
 use uuid::Uuid;
 use tracing::{info, error, warn};
 use std::net::SocketAddr;
+use sqlx::Row;
 
 use crate::state::{AppState, ClientConnection, ScriptGroup, ScriptStep};
 use common::{Message, CommandPayload, CommandResult};
@@ -388,16 +389,46 @@ pub struct ClientSummary {
     pub alias: Option<String>,
     pub ip: String,
     pub version: String,
+    pub status: String,
 }
 
 pub async fn list_clients(State(state): State<Arc<AppState>>) -> Json<Vec<ClientSummary>> {
-    let clients = state.clients.iter().map(|c| ClientSummary {
-        id: *c.key(),
-        hostname: c.value().hostname.clone(),
-        os: c.value().os.clone(),
-        alias: c.value().alias.clone(),
-        ip: c.value().ip.clone(),
-        version: c.value().version.clone(),
+    let rows = sqlx::query("SELECT id, hostname, os, alias, ip, version, status FROM clients ORDER BY last_seen DESC")
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+
+    let clients = rows.into_iter().map(|r| {
+        let id_str: String = r.get("id");
+        let id = Uuid::parse_str(&id_str).unwrap_or_default();
+        let is_connected = state.clients.contains_key(&id);
+        
+        let hostname: String = r.get("hostname");
+        let os: String = r.get("os");
+        let alias: Option<String> = r.get("alias");
+        let db_ip: Option<String> = r.get("ip");
+        let db_version: Option<String> = r.get("version");
+        let _db_status: String = r.get("status");
+
+        let (ip, version, status) = if is_connected {
+            if let Some(conn) = state.clients.get(&id) {
+                (conn.ip.clone(), conn.version.clone(), "online".to_string())
+            } else {
+                (db_ip.unwrap_or_default(), db_version.unwrap_or_default(), "online".to_string())
+            }
+        } else {
+            (db_ip.unwrap_or_default(), db_version.unwrap_or_default(), "offline".to_string())
+        };
+
+        ClientSummary {
+            id,
+            hostname,
+            os,
+            alias,
+            ip,
+            version,
+            status,
+        }
     }).collect();
     Json(clients)
 }
@@ -493,11 +524,20 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, addr: SocketAddr
             
             // Persist client to DB for history joins
             let client_id_str = client_id.to_string();
-            if let Err(e) = sqlx::query!(
-                "INSERT INTO clients (id, hostname, os, last_seen, status) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?)
-                 ON CONFLICT(id) DO UPDATE SET hostname = excluded.hostname, os = excluded.os, last_seen = CURRENT_TIMESTAMP, status = excluded.status",
-                client_id_str, hostname, os, "connected"
-            ).execute(&state.db).await {
+            let ip_str = addr.ip().to_string();
+            
+            if let Err(e) = sqlx::query(
+                "INSERT INTO clients (id, hostname, os, last_seen, status, alias, ip, version) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)
+                 ON CONFLICT(id) DO UPDATE SET hostname = excluded.hostname, os = excluded.os, last_seen = CURRENT_TIMESTAMP, status = excluded.status, alias = excluded.alias, ip = excluded.ip, version = excluded.version"
+            )
+            .bind(&client_id_str)
+            .bind(&hostname)
+            .bind(&os)
+            .bind("connected")
+            .bind(&alias)
+            .bind(&ip_str)
+            .bind(&version)
+            .execute(&state.db).await {
                 error!("Failed to persist client to DB: {}", e);
             }
 
@@ -558,6 +598,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, addr: SocketAddr
             }
             // Cleanup
             state.clients.remove(&client_id);
+            let client_id_str = client_id.to_string();
+            let _ = sqlx::query("UPDATE clients SET status = ? WHERE id = ?")
+                .bind("disconnected")
+                .bind(&client_id_str)
+                .execute(&state.db).await;
             info!("Client disconnected: {}", client_id);
         })
     };
