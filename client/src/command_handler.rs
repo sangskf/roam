@@ -4,8 +4,80 @@ use tokio::process::Command;
 use std::fs;
 use std::path::PathBuf;
 use tracing::{info, error};
+use walkdir::WalkDir;
+use zip::write::FileOptions;
+use std::io::{Seek, Write};
 
 use common::{CommandPayload, CommandResult, HardwareInfo, FileInfo};
+
+fn zip_directory(src_dir: &std::path::Path, dst_file: &std::path::Path) -> anyhow::Result<()> {
+    if !src_dir.is_dir() {
+        return Err(anyhow::anyhow!("Source is not a directory"));
+    }
+
+    let file = std::fs::File::create(dst_file)?;
+    let mut zip = zip::ZipWriter::new(file);
+    let options = FileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .unix_permissions(0o755);
+
+    let walkdir = WalkDir::new(src_dir);
+    let it = walkdir.into_iter();
+
+    for entry in it {
+        let entry = entry?;
+        let path = entry.path();
+        let name = path.strip_prefix(src_dir)?;
+        let path_as_string = name
+            .to_str()
+            .map(str::to_owned)
+            .ok_or_else(|| anyhow::anyhow!("Invalid path"))?;
+
+        if path.is_file() {
+            zip.start_file(path_as_string, options)?;
+            let mut f = std::fs::File::open(path)?;
+            std::io::copy(&mut f, &mut zip)?;
+        } else if !name.as_os_str().is_empty() {
+            zip.add_directory(path_as_string, options)?;
+        }
+    }
+    zip.finish()?;
+    Ok(())
+}
+
+fn unzip_file(zip_path: &std::path::Path, dest_dir: &std::path::Path) -> anyhow::Result<()> {
+    let file = std::fs::File::open(zip_path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)?;
+        let outpath = match file.enclosed_name() {
+            Some(path) => dest_dir.join(path),
+            None => continue,
+        };
+
+        if (*file.name()).ends_with('/') {
+            std::fs::create_dir_all(&outpath)?;
+        } else {
+            if let Some(p) = outpath.parent() {
+                if !p.exists() {
+                    std::fs::create_dir_all(p)?;
+                }
+            }
+            let mut outfile = std::fs::File::create(&outpath)?;
+            std::io::copy(&mut file, &mut outfile)?;
+        }
+        
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Some(mode) = file.unix_mode() {
+                std::fs::set_permissions(&outpath, std::fs::Permissions::from_mode(mode))?;
+            }
+        }
+    }
+    Ok(())
+}
 
 pub async fn handle_command(cmd: CommandPayload) -> CommandResult {
     match cmd {
@@ -301,6 +373,109 @@ pub async fn handle_command(cmd: CommandPayload) -> CommandResult {
                     error!("Failed to write file: {}", e);
                     CommandResult::Error(format!("Failed to write file: {}", e))
                 },
+            }
+        }
+        CommandPayload::DownloadAndUnzip { url, dest_path } => {
+            info!("Downloading and unzipping from {} to {}", url, dest_path);
+            let client = match reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(3600))
+                .build() {
+                    Ok(c) => c,
+                    Err(e) => return CommandResult::Error(format!("Failed to build http client: {}", e)),
+                };
+
+            match client.get(&url).send().await {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        match resp.bytes().await {
+                            Ok(bytes) => {
+                                let temp_dir = std::env::temp_dir();
+                                let temp_zip = temp_dir.join(format!("roam_download_{}.zip", uuid::Uuid::new_v4()));
+                                
+                                if let Err(e) = tokio::fs::write(&temp_zip, &bytes).await {
+                                     return CommandResult::Error(format!("Failed to write temp zip: {}", e));
+                                }
+                                
+                                let dest = PathBuf::from(&dest_path);
+                                let temp_zip_clone = temp_zip.clone();
+                                
+                                let res = tokio::task::spawn_blocking(move || {
+                                    unzip_file(&temp_zip_clone, &dest)
+                                }).await;
+                                
+                                // Clean up temp file
+                                let _ = tokio::fs::remove_file(&temp_zip).await;
+                                
+                                match res {
+                                    Ok(Ok(_)) => CommandResult::Success(format!("Directory downloaded and unzipped to {}", dest_path)),
+                                    Ok(Err(e)) => CommandResult::Error(format!("Failed to unzip: {}", e)),
+                                    Err(e) => CommandResult::Error(format!("Join error: {}", e)),
+                                }
+                            }
+                            Err(e) => CommandResult::Error(format!("Failed to read bytes: {}", e)),
+                        }
+                    } else {
+                        CommandResult::Error(format!("Download failed with status: {}", resp.status()))
+                    }
+                }
+                Err(e) => CommandResult::Error(format!("Request failed: {}", e)),
+            }
+        }
+        CommandPayload::ZipAndUpload { src_path, upload_url } => {
+            info!("Zipping and uploading {} to {}", src_path, upload_url);
+            let src = PathBuf::from(&src_path);
+            if !src.exists() || !src.is_dir() {
+                return CommandResult::Error(format!("Source directory does not exist or is not a directory: {}", src_path));
+            }
+            
+            let temp_dir = std::env::temp_dir();
+            let temp_zip = temp_dir.join(format!("roam_upload_{}.zip", uuid::Uuid::new_v4()));
+            let temp_zip_clone = temp_zip.clone();
+            let src_clone = src.clone();
+            
+            let zip_res = tokio::task::spawn_blocking(move || {
+                zip_directory(&src_clone, &temp_zip_clone)
+            }).await;
+            
+            match zip_res {
+                Ok(Ok(_)) => {
+                    // Read zip file
+                    match tokio::fs::read(&temp_zip).await {
+                        Ok(data) => {
+                             let client = match reqwest::Client::builder()
+                                .timeout(std::time::Duration::from_secs(3600))
+                                .build() {
+                                    Ok(c) => c,
+                                    Err(e) => return CommandResult::Error(format!("Failed to build http client: {}", e)),
+                                };
+                            
+                            let file_name = format!("{}.zip", src.file_name().unwrap_or_default().to_string_lossy());
+                            let form = reqwest::multipart::Form::new()
+                                .part("file", reqwest::multipart::Part::bytes(data).file_name(file_name));
+                                
+                            let upload_res = match client.post(&upload_url).multipart(form).send().await {
+                                Ok(resp) => {
+                                    if resp.status().is_success() {
+                                        CommandResult::Success("Directory zipped and uploaded successfully".to_string())
+                                    } else {
+                                        CommandResult::Error(format!("Upload failed with status: {}", resp.status()))
+                                    }
+                                }
+                                Err(e) => CommandResult::Error(format!("Failed to send file: {}", e)),
+                            };
+                            
+                            // Cleanup
+                            let _ = tokio::fs::remove_file(&temp_zip).await;
+                            upload_res
+                        }
+                        Err(e) => {
+                            let _ = tokio::fs::remove_file(&temp_zip).await;
+                            CommandResult::Error(format!("Failed to read temp zip: {}", e))
+                        }
+                    }
+                }
+                Ok(Err(e)) => CommandResult::Error(format!("Failed to zip directory: {}", e)),
+                Err(e) => CommandResult::Error(format!("Join error: {}", e)),
             }
         }
     }

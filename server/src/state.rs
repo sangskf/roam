@@ -48,6 +48,8 @@ pub enum ScriptStep {
     Shell { cmd: String, args: Vec<String> },
     Upload { local_path: String, remote_path: String },
     Download { remote_path: String },
+    UploadDir { local_path: String, remote_path: String },
+    DownloadDir { remote_path: String },
 }
 
 impl AppState {

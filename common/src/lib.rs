@@ -46,6 +46,10 @@ pub enum CommandPayload {
     UpdateClient { url: String },
     ReadFile { path: String },
     WriteFile { path: String, content: String },
+    // Download zip from URL and unzip to dest_path
+    DownloadAndUnzip { url: String, dest_path: String },
+    // Zip directory at src_path and upload to upload_url
+    ZipAndUpload { src_path: String, upload_url: String },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

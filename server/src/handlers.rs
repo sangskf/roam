@@ -398,6 +398,45 @@ pub async fn run_script(
     (StatusCode::OK, "Script execution started on selected clients").into_response()
 }
 
+use walkdir::WalkDir;
+use zip::write::FileOptions;
+use std::io::{Seek, Write};
+
+fn zip_directory(src_dir: &str, dst_file: &str) -> anyhow::Result<()> {
+    if !std::path::Path::new(src_dir).is_dir() {
+        return Err(anyhow::anyhow!("Source is not a directory"));
+    }
+
+    let file = std::fs::File::create(dst_file)?;
+    let mut zip = zip::ZipWriter::new(file);
+    let options = FileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .unix_permissions(0o755);
+
+    let walkdir = WalkDir::new(src_dir);
+    let it = walkdir.into_iter();
+
+    for entry in it {
+        let entry = entry?;
+        let path = entry.path();
+        let name = path.strip_prefix(std::path::Path::new(src_dir))?;
+        let path_as_string = name
+            .to_str()
+            .map(str::to_owned)
+            .ok_or_else(|| anyhow::anyhow!("Invalid path"))?;
+
+        if path.is_file() {
+            zip.start_file(path_as_string, options)?;
+            let mut f = std::fs::File::open(path)?;
+            std::io::copy(&mut f, &mut zip)?;
+        } else if !name.as_os_str().is_empty() {
+            zip.add_directory(path_as_string, options)?;
+        }
+    }
+    zip.finish()?;
+    Ok(())
+}
+
 async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGroup, history_id: Uuid) {
     info!("Starting script {} on client {}", script.name, client_id);
     
@@ -429,18 +468,40 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
             progress.current_step = i + 1;
         }
 
-        let cmd_payload = match step {
-            ScriptStep::Shell { cmd, args } => CommandPayload::ShellExec { cmd: cmd.clone(), args: args.clone() },
+        let cmd_payload_result = match step {
+            ScriptStep::Shell { cmd, args } => Ok(CommandPayload::ShellExec { cmd: cmd.clone(), args: args.clone() }),
             ScriptStep::Upload { local_path, remote_path } => {
                 let host = format!("{}:{}", state.config.host, state.config.port);
                 let download_url = format!("http://{}/api/files/download/staging/{}", host, local_path);
-                CommandPayload::DownloadFile { url: download_url, dest_path: remote_path.clone() }
+                Ok(CommandPayload::DownloadFile { url: download_url, dest_path: remote_path.clone() })
             },
             ScriptStep::Download { remote_path } => {
                 let upload_id = Uuid::new_v4();
                 let host = format!("{}:{}", state.config.host, state.config.port);
                 let upload_url = format!("http://{}/api/files/client-upload/{}", host, upload_id);
-                CommandPayload::UploadFile { src_path: remote_path.clone(), upload_url }
+                Ok(CommandPayload::UploadFile { src_path: remote_path.clone(), upload_url })
+            },
+            ScriptStep::UploadDir { local_path, remote_path } => {
+                // Zip the directory first
+                let src_dir = format!("uploads/staging/{}", local_path);
+                let zip_name = format!("{}.zip", local_path);
+                let dst_zip = format!("uploads/staging/{}", zip_name);
+                
+                match zip_directory(&src_dir, &dst_zip) {
+                    Ok(_) => {
+                        let host = format!("{}:{}", state.config.host, state.config.port);
+                        let download_url = format!("http://{}/api/files/download/staging/{}", host, zip_name);
+                        Ok(CommandPayload::DownloadAndUnzip { url: download_url, dest_path: remote_path.clone() })
+                    },
+                    Err(e) => Err(format!("Failed to zip directory: {}", e))
+                }
+            },
+            ScriptStep::DownloadDir { remote_path } => {
+                let upload_id = Uuid::new_v4();
+                let host = format!("{}:{}", state.config.host, state.config.port);
+                // Client will upload a zip file, server receives it as generic file upload
+                let upload_url = format!("http://{}/api/files/client-upload/{}", host, upload_id);
+                Ok(CommandPayload::ZipAndUpload { src_path: remote_path.clone(), upload_url })
             }
         };
         
@@ -449,6 +510,17 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
         if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
             progress.logs.push(log_start);
         }
+
+        if let Err(e) = cmd_payload_result {
+             let log_err = format!("Step {}: Setup failed: {}", i + 1, e);
+             logs.push(log_err.clone());
+             if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
+                 progress.logs.push(log_err);
+             }
+             success = false;
+             break;
+        }
+        let cmd_payload = cmd_payload_result.unwrap();
         
         // Send command
         if let Some(client) = state.clients.get(&client_id) {

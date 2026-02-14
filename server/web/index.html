@@ -248,45 +248,50 @@
         <!-- Shell Modal -->
         <div v-if="activeModal === 'shell'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div class="bg-white rounded-lg shadow-lg flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full md:w-1/2 h-[600px]'">
-                <div class="flex justify-between items-center p-6 pb-2">
-                    <h3 class="text-xl font-bold">{{ t('remoteShell') }}: {{ selectedClient?.hostname }}</h3>
-                    <div class="flex gap-2">
-                         <button @click="triggerShellUpload" class="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-sm flex items-center gap-1">
+                <div class="flex justify-between items-center p-4 border-b bg-gray-50 rounded-t-lg">
+                    <h3 class="font-bold text-lg">{{ t('remoteShell') }}: {{ selectedClient?.hostname }}</h3>
+                    <div class="flex items-center gap-2">
+                         <button @click="triggerShellUpload" class="bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded text-xs flex items-center gap-1 mr-2">
                             <span>⬆</span> {{ t('upload') }}
                          </button>
-                         <button @click="toggleMaximize" class="text-gray-500 hover:text-gray-700">
-                            <span v-if="isMaximized">{{ t('restore') }}</span>
-                            <span v-else>{{ t('maximize') }}</span>
-                        </button>
+                         <div class="flex items-center bg-white border rounded shadow-sm">
+                             <button @click="toggleMaximize" class="px-3 py-1 hover:bg-gray-100 text-gray-600 border-r" :title="isMaximized ? t('restore') : t('maximize')">
+                                <span v-if="isMaximized">❐</span>
+                                <span v-else>☐</span>
+                            </button>
+                            <button @click="closeModal" class="px-3 py-1 hover:bg-red-500 hover:text-white text-gray-600" :title="t('close')">
+                                ✕
+                            </button>
+                         </div>
                     </div>
                 </div>
-                <div ref="shellOutputRef" class="flex-1 bg-gray-900 text-green-400 p-4 mx-6 mb-4 rounded font-mono text-sm overflow-auto whitespace-pre-wrap">{{ shellOutput }}</div>
-                <form @submit.prevent="runShellCommand" class="flex gap-2 mx-6">
+                <div ref="shellOutputRef" class="flex-1 bg-gray-900 text-green-400 p-4 mx-4 mt-4 mb-4 rounded font-mono text-sm overflow-auto whitespace-pre-wrap">{{ shellOutput }}</div>
+                <form @submit.prevent="runShellCommand" class="flex gap-2 mx-4 mb-4">
                     <input v-model="shellInput" type="text" :placeholder="t('enterCommand')" class="flex-1 border rounded px-3 py-2 font-mono" autofocus>
                     <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">{{ t('run') }}</button>
                 </form>
                 <!-- Hidden file input for shell upload -->
                 <input type="file" ref="shellFileInput" class="hidden" @change="handleShellUpload">
-                <div class="p-6 pt-2 flex justify-end">
-                    <button @click="closeModal" class="text-gray-500 hover:text-gray-700 text-sm underline">{{ t('close') }}</button>
-                </div>
             </div>
         </div>
 
         <!-- Files Modal -->
         <div v-if="activeModal === 'files'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div class="bg-white rounded-lg shadow-lg flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full md:w-1/2 h-[600px]'">
-                <div class="flex justify-between items-center p-6 pb-2">
-                    <h3 class="text-xl font-bold">{{ t('fileBrowser') }}: {{ selectedClient?.hostname }}</h3>
-                    <div class="flex gap-2">
-                         <button @click="toggleMaximize" class="text-gray-500 hover:text-gray-700">
-                            <span v-if="isMaximized">{{ t('restore') }}</span>
-                            <span v-else>{{ t('maximize') }}</span>
+                <div class="flex justify-between items-center p-4 border-b bg-gray-50 rounded-t-lg">
+                    <h3 class="font-bold text-lg">{{ t('fileBrowser') }}: {{ selectedClient?.hostname }}</h3>
+                    <div class="flex items-center bg-white border rounded shadow-sm">
+                         <button @click="toggleMaximize" class="px-3 py-1 hover:bg-gray-100 text-gray-600 border-r" :title="isMaximized ? t('restore') : t('maximize')">
+                            <span v-if="isMaximized">❐</span>
+                            <span v-else>☐</span>
+                        </button>
+                        <button @click="closeModal" class="px-3 py-1 hover:bg-red-500 hover:text-white text-gray-600" :title="t('close')">
+                            ✕
                         </button>
                     </div>
                 </div>
                 
-                <div class="flex gap-2 mb-4 mx-6">
+                <div class="flex gap-2 my-4 mx-4">
                     <input v-model="currentPath" @keyup.enter="listFiles(currentPath)" class="flex-1 border rounded px-2 py-1 text-sm font-mono bg-gray-50">
                     <button @click="listFiles(currentPath)" class="bg-blue-500 text-white px-3 py-1 rounded text-sm">Go</button>
                     <button @click="navigateUp" class="bg-gray-300 px-3 py-1 rounded text-sm">Up</button>
@@ -294,7 +299,7 @@
                     <input type="file" ref="fileInput" class="hidden" @change="handleFileUpload">
                 </div>
                 
-                <div class="flex-1 overflow-auto border rounded mx-6">
+                <div class="flex-1 overflow-auto border rounded mx-4 mb-4">
                      <div v-if="commandLoading" class="p-4 text-center text-gray-500">{{ t('loading') }}</div>
                      <table v-else class="w-full text-sm">
                         <thead class="bg-gray-100 sticky top-0">
@@ -322,30 +327,29 @@
                         </tbody>
                      </table>
                 </div>
-
-                <div class="p-6 pt-4 flex justify-end">
-                    <button @click="closeModal" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded">{{ t('close') }}</button>
-                </div>
             </div>
         </div>
 
         <!-- Editor Modal -->
         <div v-if="activeModal === 'editor'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div class="bg-white rounded-lg shadow-lg flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full md:w-1/2 h-[600px]'">
-                <div class="flex justify-between items-center p-6 pb-2">
-                    <h3 class="text-xl font-bold">{{ t('viewingEditing') }}: {{ editorFile?.name }}</h3>
-                    <div class="flex gap-2">
-                         <button @click="toggleMaximize" class="text-gray-500 hover:text-gray-700">
-                            <span v-if="isMaximized">{{ t('restore') }}</span>
-                            <span v-else>{{ t('maximize') }}</span>
+                <div class="flex justify-between items-center p-4 border-b bg-gray-50 rounded-t-lg">
+                    <h3 class="font-bold text-lg">{{ t('viewingEditing') }}: {{ editorFile?.name }}</h3>
+                    <div class="flex items-center bg-white border rounded shadow-sm">
+                         <button @click="toggleMaximize" class="px-3 py-1 hover:bg-gray-100 text-gray-600 border-r" :title="isMaximized ? t('restore') : t('maximize')">
+                            <span v-if="isMaximized">❐</span>
+                            <span v-else>☐</span>
+                        </button>
+                        <button @click="closeEditor" class="px-3 py-1 hover:bg-red-500 hover:text-white text-gray-600" :title="t('close')">
+                            ✕
                         </button>
                     </div>
                 </div>
                 
                 <div v-if="commandLoading" class="flex-1 flex items-center justify-center">{{ t('loading') }}</div>
-                <textarea v-else v-model="editorContent" class="flex-1 border rounded p-4 mx-6 mb-4 font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                <textarea v-else v-model="editorContent" class="flex-1 border rounded p-4 mx-4 my-4 font-mono text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
                 
-                <div class="p-6 pt-0 flex justify-end gap-2">
+                <div class="p-4 pt-0 flex justify-end gap-2 mb-2">
                     <button @click="closeEditor" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded">{{ t('closeCancel') }}</button>
                     <button @click="saveFile" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded" :disabled="commandLoading">{{ t('saveChanges') }}</button>
                 </div>
@@ -425,9 +429,11 @@
                                     <div class="w-1/4">
                                         <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('stepType') }}</label>
                                         <select v-model="step.type" class="w-full border rounded px-2 py-1 text-sm bg-white">
-                                            <option value="Shell">Shell</option>
-                                            <option value="Upload">Upload</option>
-                                            <option value="Download">Download</option>
+                                            <option value="Shell">{{ t('shell') }}</option>
+                                            <option value="Upload">{{ t('uploadFile') }}</option>
+                                            <option value="Download">{{ t('downloadFile') }}</option>
+                                            <option value="UploadDir">{{ t('uploadDir') }}</option>
+                                            <option value="DownloadDir">{{ t('downloadDir') }}</option>
                                         </select>
                                     </div>
                                     <div class="flex-1">
@@ -446,6 +452,16 @@
                                         <div v-if="step.type === 'Download'">
                                             <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('remotePath') }}</label>
                                             <input v-model="step.remote_path" class="w-full border rounded px-2 py-1 text-sm" placeholder="/etc/passwd">
+                                        </div>
+                                        <div v-if="step.type === 'UploadDir'">
+                                            <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('localPath') }}</label>
+                                            <input v-model="step.local_path" class="w-full border rounded px-2 py-1 text-sm mb-2" placeholder="Folder name in staging (e.g. my-app)">
+                                            <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('remotePath') }}</label>
+                                            <input v-model="step.remote_path" class="w-full border rounded px-2 py-1 text-sm" placeholder="/opt/my-app">
+                                        </div>
+                                        <div v-if="step.type === 'DownloadDir'">
+                                            <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('remotePath') }}</label>
+                                            <input v-model="step.remote_path" class="w-full border rounded px-2 py-1 text-sm" placeholder="/var/log/app">
                                         </div>
                                     </div>
                                 </div>
@@ -835,6 +851,10 @@
                         deployUpdate: 'Deploy Update',
                         selectClientsToUpdate: 'Select Clients to Update',
                         startUpdate: 'Start Update',
+                        uploadFile: 'Upload File',
+                        downloadFile: 'Download File',
+                        uploadDir: 'Upload Directory',
+                        downloadDir: 'Download Directory',
                         updates: 'Updates',
                     },
                     zh: {
@@ -960,6 +980,10 @@
                         deployUpdate: '部署更新',
                         selectClientsToUpdate: '选择要更新的客户端',
                         startUpdate: '开始更新',
+                        uploadFile: '上传文件',
+                        downloadFile: '下载文件',
+                        uploadDir: '上传文件夹',
+                        downloadDir: '下载文件夹',
                         updates: '更新管理',
                     }
                 }
@@ -1457,6 +1481,10 @@
                                 return { type: 'Upload', local_path: s.payload.local_path, remote_path: s.payload.remote_path }
                             } else if (s.type === 'Download') {
                                 return { type: 'Download', remote_path: s.payload.remote_path }
+                            } else if (s.type === 'UploadDir') {
+                                return { type: 'UploadDir', local_path: s.payload.local_path, remote_path: s.payload.remote_path }
+                            } else if (s.type === 'DownloadDir') {
+                                return { type: 'DownloadDir', remote_path: s.payload.remote_path }
                             }
                             return s
                         })
@@ -1487,6 +1515,10 @@
                             return { type: 'Upload', payload: { local_path: s.local_path, remote_path: s.remote_path } }
                         } else if (s.type === 'Download') {
                             return { type: 'Download', payload: { remote_path: s.remote_path } }
+                        } else if (s.type === 'UploadDir') {
+                            return { type: 'UploadDir', payload: { local_path: s.local_path, remote_path: s.remote_path } }
+                        } else if (s.type === 'DownloadDir') {
+                            return { type: 'DownloadDir', payload: { remote_path: s.remote_path } }
                         }
                         return null
                     }).filter(s => s)
