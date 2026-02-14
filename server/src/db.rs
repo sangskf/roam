@@ -48,6 +48,35 @@ pub async fn init_db(db_url: &str) -> anyhow::Result<Pool<Sqlite>> {
             completed_at DATETIME,
             logs TEXT -- JSON array of log entries
         );
+        CREATE TABLE IF NOT EXISTS client_groups (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS client_group_members (
+            group_id TEXT NOT NULL,
+            client_id TEXT NOT NULL,
+            PRIMARY KEY (group_id, client_id),
+            FOREIGN KEY(group_id) REFERENCES client_groups(id) ON DELETE CASCADE,
+            FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS group_scripts (
+            group_id TEXT NOT NULL,
+            script_id TEXT NOT NULL,
+            PRIMARY KEY (group_id, script_id),
+            FOREIGN KEY(group_id) REFERENCES client_groups(id) ON DELETE CASCADE,
+            FOREIGN KEY(script_id) REFERENCES scripts(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS client_updates (
+            id TEXT PRIMARY KEY,
+            version TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            platform TEXT NOT NULL,
+            uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
         "#,
     )
     .execute(&pool)

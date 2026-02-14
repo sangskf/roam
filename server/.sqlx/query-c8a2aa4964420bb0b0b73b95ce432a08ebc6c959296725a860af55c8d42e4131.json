@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO client_group_members (group_id, client_id) VALUES (?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "c8a2aa4964420bb0b0b73b95ce432a08ebc6c959296725a860af55c8d42e4131"
+}

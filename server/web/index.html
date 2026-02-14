@@ -11,11 +11,13 @@
     <div id="app" class="min-h-screen p-6 flex flex-col">
         <header class="mb-6 flex justify-between items-center bg-white p-4 rounded shadow-sm">
             <div class="flex items-center gap-6">
-                <h1 class="text-2xl font-bold text-blue-600">{{ t('dashboardTitle') }}</h1>
+                <h1 class="text-2xl font-bold text-blue-600">{{ t('dashboardTitle') }} <span v-if="serverInfo" class="text-xs text-gray-400 font-normal">v{{ serverInfo.version }}</span></h1>
                 <nav class="flex gap-2">
                     <button @click="currentView = 'dashboard'" :class="['px-3 py-1 rounded transition', currentView === 'dashboard' ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-600 hover:bg-gray-100']">{{ t('dashboard') }}</button>
+                    <button @click="currentView = 'groups'; fetchGroups()" :class="['px-3 py-1 rounded transition', currentView === 'groups' ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-600 hover:bg-gray-100']">{{ t('groups') }}</button>
                     <button @click="currentView = 'scripts'; fetchScripts()" :class="['px-3 py-1 rounded transition', currentView === 'scripts' ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-600 hover:bg-gray-100']">{{ t('scripts') }}</button>
                     <button @click="currentView = 'history'; fetchHistory()" :class="['px-3 py-1 rounded transition', currentView === 'history' ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-600 hover:bg-gray-100']">{{ t('history') }}</button>
+                    <button @click="currentView = 'updates'; fetchUpdates()" :class="['px-3 py-1 rounded transition', currentView === 'updates' ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-600 hover:bg-gray-100']">{{ t('updates') }}</button>
                 </nav>
             </div>
             <div class="flex items-center gap-4">
@@ -57,7 +59,6 @@
                             <button @click="openHardware(client)" :disabled="client.status === 'offline'" :class="['px-2 py-1 rounded border whitespace-nowrap', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-green-600 hover:bg-green-100 border-green-200']">{{ t('hardware') }}</button>
                             <button @click="openShell(client)" :disabled="client.status === 'offline'" :class="['px-2 py-1 rounded border whitespace-nowrap', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-gray-700 hover:bg-gray-100 border-gray-300']">{{ t('shell') }}</button>
                             <button @click="openFiles(client)" :disabled="client.status === 'offline'" :class="['px-2 py-1 rounded border whitespace-nowrap', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-blue-600 hover:bg-blue-100 border-blue-200']">{{ t('files') }}</button>
-                            <button @click="openUpdate(client)" :disabled="client.status === 'offline'" :class="['px-2 py-1 rounded border whitespace-nowrap', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-orange-600 hover:bg-orange-100 border-orange-200']">{{ t('update') }}</button>
                         </td>
                     </tr>
                     <tr v-if="clients.length === 0">
@@ -65,6 +66,39 @@
                     </tr>
                 </tbody>
             </table>
+        </div>
+
+        <!-- Groups View -->
+        <div v-if="currentView === 'groups'" class="bg-white rounded-lg shadow-md p-6 flex-1 flex flex-col">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-xl font-bold">{{ t('groupManager') }}</h2>
+                <button @click="openGroupEditor()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow-sm flex items-center gap-2">
+                    <span>+</span> {{ t('createGroup') }}
+                </button>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div v-for="group in groupList" :key="group.id" class="border rounded-lg p-4 hover:shadow-md transition bg-gray-50 flex flex-col">
+                    <div class="flex justify-between items-start mb-2">
+                        <h3 class="font-bold text-lg text-gray-800">{{ group.name }}</h3>
+                        <div class="flex gap-1">
+                            <button @click="openGroupEditor(group)" class="text-gray-500 hover:text-blue-600 p-1" title="Edit">✎</button>
+                            <button @click="deleteGroup(group.id)" class="text-gray-500 hover:text-red-600 p-1" title="Delete">🗑</button>
+                        </div>
+                    </div>
+                    <div class="text-sm text-gray-500 mb-4 flex-1">
+                        {{ group.client_ids.length }} {{ t('clients') }}
+                        <span v-if="group.script_ids && group.script_ids.length > 0" class="ml-2 text-blue-600">
+                             • {{ group.script_ids.length }} {{ t('boundScripts') }}
+                        </span>
+                    </div>
+                    <div class="mt-2 pt-2 border-t flex justify-end">
+                         <button @click="runGroupScripts(group)" class="text-sm bg-green-600 text-white px-3 py-1.5 rounded hover:bg-green-700 shadow-sm flex items-center gap-1">
+                            <span>▶</span> {{ t('runBoundScripts') }}
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Scripts View -->
@@ -92,6 +126,51 @@
                         {{ t('runScript') }}
                     </button>
                 </div>
+            </div>
+        </div>
+
+        <!-- Updates View -->
+        <div v-if="currentView === 'updates'" class="bg-white rounded-lg shadow-md p-6 flex-1 flex flex-col">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-xl font-bold">{{ t('updateManager') }}</h2>
+                <button @click="openUploadUpdateModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow-sm flex items-center gap-2">
+                    <span>+</span> {{ t('uploadUpdate') }}
+                </button>
+            </div>
+            
+            <div class="overflow-auto">
+                 <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-gray-50 text-gray-700 text-sm">
+                            <th class="p-4 border-b">{{ t('version') }}</th>
+                            <th class="p-4 border-b">{{ t('platform') }}</th>
+                            <th class="p-4 border-b">{{ t('filename') }}</th>
+                            <th class="p-4 border-b">{{ t('uploadedAt') }}</th>
+                            <th class="p-4 border-b">{{ t('actions') }}</th>
+                        </tr>
+                    </thead>
+                    <tbody class="text-sm">
+                        <tr v-for="upd in updateList" :key="upd.id" class="hover:bg-blue-50 border-b last:border-b-0 transition-colors">
+                            <td class="p-4 font-medium">{{ upd.version }}</td>
+                            <td class="p-4">
+                                <span :class="{'px-2 py-1 rounded text-xs font-bold': true, 
+                                    'bg-blue-100 text-blue-700': upd.platform === 'windows',
+                                    'bg-orange-100 text-orange-700': upd.platform === 'linux',
+                                    'bg-gray-100 text-gray-700': upd.platform === 'macos'
+                                }">{{ upd.platform }}</span>
+                            </td>
+                            <td class="p-4 font-mono text-gray-500">{{ upd.filename }}</td>
+                            <td class="p-4 text-gray-500">{{ new Date(upd.uploaded_at).toLocaleString() }}</td>
+                            <td class="p-4 flex gap-2">
+                                <button @click="openDeployUpdate(upd)" class="text-green-600 hover:bg-green-100 px-2 py-1 rounded border border-green-200">{{ t('deploy') }}</button>
+                                <button @click="deleteUpdate(upd.id)" class="text-red-600 hover:bg-red-100 px-2 py-1 rounded border border-red-200">{{ t('delete') }}</button>
+                            </td>
+                        </tr>
+                        <tr v-if="updateList.length === 0">
+                            <td colspan="5" class="p-12 text-center text-gray-400 italic">{{ t('noUpdates') }}</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
 
@@ -273,26 +352,50 @@
             </div>
         </div>
 
-        <!-- Update Modal -->
-        <div v-if="activeModal === 'update'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
-                <h3 class="text-xl font-bold mb-4">{{ t('updateClient') }}: {{ selectedClient?.hostname }}</h3>
-                <p class="text-gray-600 mb-4">{{ t('currentVersion') }}: {{ selectedClient?.version }}</p>
-                
-                <div class="mb-4">
-                    <label class="block text-gray-700 text-sm font-bold mb-2">{{ t('updateUrl') }}</label>
-                    <input v-model="updateUrl" type="text" placeholder="http://example.com/client.exe" class="w-full border rounded px-3 py-2">
+        <!-- Group Editor Modal -->
+        <div v-if="activeModal === 'groupEditor'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-md">
+                <div class="p-6 border-b">
+                    <h3 class="text-xl font-bold">{{ isCreatingGroup ? t('createGroup') : t('editGroup') }}</h3>
                 </div>
-
-                <div v-if="updateStatus" class="mb-4 p-3 rounded text-sm" :class="updateStatus.type === 'error' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'">
-                    {{ updateStatus.message }}
+                <div class="p-6 max-h-[60vh] overflow-auto">
+                    <div class="mb-4" v-if="isCreatingGroup">
+                        <label class="block text-sm font-bold mb-1">{{ t('groupName') }}</label>
+                        <input v-model="newGroup.name" class="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                    <div v-else>
+                        <h4 class="font-bold mb-2">{{ selectedGroup?.name }}</h4>
+                    </div>
+                    
+                    <p class="mb-2 text-sm text-gray-600 font-bold">{{ t('selectClients') }}</p>
+                    <div class="space-y-2">
+                        <label v-for="client in clients" :key="client.id" class="flex items-center p-2 hover:bg-gray-50 rounded cursor-pointer border">
+                            <input type="checkbox" :value="client.id" v-model="newGroup.client_ids" class="mr-3 h-4 w-4 text-blue-600">
+                            <div>
+                                <div class="font-medium text-sm">
+                                    {{ client.hostname }}
+                                    <span v-if="client.alias" class="text-gray-500 font-normal ml-1">({{ client.alias }})</span>
+                                </div>
+                                <div class="text-xs text-gray-500">{{ client.ip }}</div>
+                            </div>
+                        </label>
+                        <div v-if="clients.length === 0" class="text-center text-gray-400 py-4">{{ t('noClients') }}</div>
+                    </div>
+                    
+                    <div class="mt-4 mb-2">
+                        <p class="mb-2 text-sm text-gray-600 font-bold">{{ t('bindScripts') }}</p>
+                        <div class="space-y-2 max-h-40 overflow-auto border p-2 rounded bg-gray-50">
+                            <label v-for="script in scriptList" :key="script.id" class="flex items-center p-2 hover:bg-white rounded cursor-pointer border border-transparent hover:border-gray-200">
+                                <input type="checkbox" :value="script.id" v-model="newGroup.script_ids" class="mr-3 h-4 w-4 text-blue-600">
+                                <div class="text-sm font-medium">{{ script.name }}</div>
+                            </label>
+                            <div v-if="scriptList.length === 0" class="text-center text-gray-400 py-2">{{ t('noScripts') }}</div>
+                        </div>
+                    </div>
                 </div>
-
-                <div class="flex justify-end gap-2">
-                    <button @click="closeModal" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded">{{ t('cancel') }}</button>
-                    <button @click="triggerUpdate" class="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded" :disabled="commandLoading">
-                        {{ commandLoading ? t('updating') : t('startUpdate') }}
-                    </button>
+                <div class="p-6 border-t flex justify-end gap-3">
+                    <button @click="closeModal" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">{{ t('cancel') }}</button>
+                    <button @click="saveGroup" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 shadow-sm">{{ t('save') }}</button>
                 </div>
             </div>
         </div>
@@ -369,7 +472,10 @@
                         <label v-for="client in clients" :key="client.id" class="flex items-center p-2 hover:bg-gray-50 rounded cursor-pointer border">
                             <input type="checkbox" :value="client.id" v-model="selectedClientIds" class="mr-3 h-4 w-4 text-blue-600">
                             <div>
-                                <div class="font-medium text-sm">{{ client.hostname }}</div>
+                                <div class="font-medium text-sm">
+                                    {{ client.hostname }}
+                                    <span v-if="client.alias" class="text-gray-500 font-normal ml-1">({{ client.alias }})</span>
+                                </div>
                                 <div class="text-xs text-gray-500">{{ client.ip }}</div>
                             </div>
                         </label>
@@ -398,15 +504,147 @@
             </div>
         </div>
 
+        <!-- Execution Monitor Modal -->
+        <div v-if="activeModal === 'executionMonitor'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl flex flex-col max-h-[90vh] relative">
+                <div class="p-4 border-b flex justify-between items-center">
+                    <h3 class="font-bold text-lg">{{ t('executionMonitor') }}</h3>
+                    <button @click="closeModal" class="text-gray-500 hover:text-gray-700">✕</button>
+                </div>
+                <div class="p-4 overflow-auto flex-1 bg-gray-50">
+                    <table class="w-full text-left text-sm border-collapse bg-white shadow-sm rounded">
+                        <thead class="bg-gray-100">
+                            <tr>
+                                <th class="p-3 border-b">{{ t('client') }}</th>
+                                <th class="p-3 border-b">{{ t('scriptName') }}</th>
+                                <th class="p-3 border-b">{{ t('status') }}</th>
+                                <th class="p-3 border-b">{{ t('progress') }}</th>
+                                <th class="p-3 border-b">{{ t('latestLog') }}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="exec in executionList" :key="exec.execution_id" class="border-b">
+                                <td class="p-3 font-medium">{{ exec.client_hostname }}</td>
+                                <td class="p-3">{{ exec.script_name }}</td>
+                                <td class="p-3">
+                                    <span :class="{'px-2 py-0.5 rounded-full text-xs font-bold': true, 
+                                        'bg-green-100 text-green-700': exec.status === 'completed',
+                                        'bg-red-100 text-red-700': exec.status === 'failed',
+                                        'bg-blue-100 text-blue-700': exec.status === 'running'
+                                    }">{{ exec.status }}</span>
+                                </td>
+                                <td class="p-3">
+                                    <div class="flex items-center gap-2">
+                                        <div class="w-20 bg-gray-200 rounded-full h-2.5">
+                                            <div class="bg-blue-600 h-2.5 rounded-full" :style="{ width: (exec.current_step / exec.total_steps * 100) + '%' }"></div>
+                                        </div>
+                                        <span class="text-xs text-gray-500">{{ exec.current_step }}/{{ exec.total_steps }}</span>
+                                    </div>
+                                </td>
+                                <td class="p-3 font-mono text-xs text-gray-500 max-w-xs">
+                                    <div class="flex justify-between items-center">
+                                        <span class="truncate block max-w-[150px]" :title="exec.logs[exec.logs.length-1]">{{ exec.logs[exec.logs.length-1] || '-' }}</span>
+                                        <button @click="viewingExecutionId = exec.execution_id" class="text-blue-600 hover:underline ml-2 whitespace-nowrap">{{ t('viewLogs') }}</button>
+                                    </div>
+                                </td>
+                            </tr>
+                            <tr v-if="executionList.length === 0">
+                                <td colspan="5" class="p-8 text-center text-gray-400">{{ t('noActiveExecutions') }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- Live Logs Overlay -->
+                <div v-if="viewingExecutionId" class="absolute inset-0 bg-white bg-opacity-95 flex flex-col z-10 p-4">
+                     <div class="flex justify-between items-center mb-4 border-b pb-2">
+                        <h4 class="font-bold">{{ t('liveLogs') }}: {{ viewingExecution?.client_hostname }} - {{ viewingExecution?.script_name }}</h4>
+                        <button @click="viewingExecutionId = null" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded text-sm">{{ t('back') }}</button>
+                    </div>
+                    <div class="flex-1 overflow-auto bg-gray-900 text-green-400 font-mono text-xs p-4 rounded">
+                         <div v-if="viewingExecution">
+                            <div v-for="(log, i) in viewingExecution.logs" :key="i" class="mb-1 whitespace-pre-wrap">{{ log }}</div>
+                         </div>
+                         <div v-else class="text-gray-500">Execution finished or not found.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Upload Update Modal -->
+        <div v-if="activeModal === 'uploadUpdate'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+                <h3 class="text-xl font-bold mb-4">{{ t('uploadUpdatePackage') }}</h3>
+                
+                <div class="mb-4">
+                    <label class="block text-gray-700 text-sm font-bold mb-2">{{ t('version') }}</label>
+                    <input v-model="newUpdate.version" type="text" placeholder="e.g. 1.0.1" class="w-full border rounded px-3 py-2">
+                </div>
+
+                <div class="mb-4">
+                    <label class="block text-gray-700 text-sm font-bold mb-2">{{ t('platform') }}</label>
+                    <select v-model="newUpdate.platform" class="w-full border rounded px-3 py-2 bg-white">
+                        <option value="windows">Windows</option>
+                        <option value="linux">Linux</option>
+                        <option value="macos">macOS</option>
+                    </select>
+                </div>
+
+                <div class="mb-4">
+                    <label class="block text-gray-700 text-sm font-bold mb-2">{{ t('file') }}</label>
+                    <input type="file" ref="updateFileInput" class="w-full border rounded px-3 py-2">
+                </div>
+
+                <div class="flex justify-end gap-2">
+                    <button @click="closeModal" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded">{{ t('cancel') }}</button>
+                    <button @click="uploadUpdate" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded" :disabled="commandLoading">
+                        {{ commandLoading ? t('uploading') : t('upload') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Deploy Update Modal -->
+        <div v-if="activeModal === 'deployUpdate'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-md">
+                <div class="p-6 border-b">
+                    <h3 class="text-xl font-bold">{{ t('deployUpdate') }}: {{ selectedUpdate?.version }}</h3>
+                </div>
+                <div class="p-6 max-h-[60vh] overflow-auto">
+                    <p class="mb-4 text-sm text-gray-600">{{ t('selectClientsToUpdate') }}</p>
+                    <div class="space-y-2">
+                        <label v-for="client in clients" :key="client.id" class="flex items-center p-2 hover:bg-gray-50 rounded cursor-pointer border">
+                            <input type="checkbox" :value="client.id" v-model="selectedClientIds" class="mr-3 h-4 w-4 text-blue-600">
+                            <div>
+                                <div class="font-medium text-sm">
+                                    {{ client.hostname }}
+                                    <span v-if="client.alias" class="text-gray-500 font-normal ml-1">({{ client.alias }})</span>
+                                </div>
+                                <div class="text-xs text-gray-500">{{ client.ip }} - {{ client.os }}</div>
+                            </div>
+                        </label>
+                        <div v-if="clients.length === 0" class="text-center text-gray-400 py-4">{{ t('noClients') }}</div>
+                    </div>
+                </div>
+                <div class="p-6 border-t flex justify-end gap-3">
+                    <button @click="closeModal" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">{{ t('cancel') }}</button>
+                    <button @click="triggerDeploy" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 shadow-sm" :disabled="selectedClientIds.length === 0">
+                        {{ t('startUpdate') }} ({{ selectedClientIds.length }})
+                    </button>
+                </div>
+            </div>
+        </div>
+
 
     </div>
 
     <script>
-        const { createApp, ref, onMounted, watch, nextTick } = Vue
+        const { createApp, ref, onMounted, watch, nextTick, computed } = Vue
 
         createApp({
             setup() {
                 const clients = ref([])
+                const serverInfo = ref(null)
                 const currentView = ref('dashboard')
                 const activeModal = ref(null)
                 const selectedClient = ref(null)
@@ -437,9 +675,11 @@
                 const editorFile = ref(null)
                 const editorContent = ref('')
 
-                // Update
-                const updateUrl = ref('')
-                const updateStatus = ref(null)
+                // Groups
+                const groupList = ref([])
+                const selectedGroup = ref(null)
+                const isCreatingGroup = ref(false)
+                const newGroup = ref({ name: '', client_ids: [], script_ids: [] })
 
                 // Scripts
                 const scriptList = ref([])
@@ -452,6 +692,16 @@
                 // History
                 const historyList = ref([])
                 const selectedLogs = ref([])
+                const executionList = ref([])
+                const viewingExecutionId = ref(null)
+                const viewingExecution = computed(() => executionList.value.find(e => e.execution_id === viewingExecutionId.value))
+                let executionPollTimer = null
+
+                // Updates
+                const updateList = ref([])
+                const selectedUpdate = ref(null)
+                const newUpdate = ref({ version: '', platform: 'windows' })
+                const updateFileInput = ref(null)
 
                 // Layout
                 const isMaximized = ref(false)
@@ -550,6 +800,42 @@
                         upload: 'Upload',
                         online: 'Online',
                         offline: 'Offline',
+                        groups: 'Groups',
+                        groupManager: 'Group Manager',
+                        createGroup: 'Create Group',
+                        groupName: 'Group Name',
+                        editGroup: 'Edit Group',
+                        clients: 'Clients',
+                        save: 'Save',
+                        bindScripts: 'Bind Script Groups',
+                        boundScripts: 'Scripts',
+                        runBoundScripts: 'Run Scripts',
+                        noScripts: 'No scripts available',
+                        executionMonitor: 'Execution Monitor',
+                        noActiveExecutions: 'No active executions',
+                        progress: 'Progress',
+                        latestLog: 'Latest Log',
+                        confirmRunGroup: 'Are you sure you want to run bound scripts for this group?',
+                        executionStarted: 'Execution started',
+                        viewLogs: 'View Logs',
+                        liveLogs: 'Live Logs',
+                        back: 'Back',
+                        updateManager: 'Update Manager',
+                        uploadUpdate: 'Upload Update',
+                        version: 'Version',
+                        platform: 'Platform',
+                        filename: 'Filename',
+                        uploadedAt: 'Uploaded At',
+                        noUpdates: 'No update packages found.',
+                        deploy: 'Deploy',
+                        delete: 'Delete',
+                        uploadUpdatePackage: 'Upload Update Package',
+                        file: 'File',
+                        uploading: 'Uploading...',
+                        deployUpdate: 'Deploy Update',
+                        selectClientsToUpdate: 'Select Clients to Update',
+                        startUpdate: 'Start Update',
+                        updates: 'Updates',
                     },
                     zh: {
                         dashboardTitle: 'Roam 控制台',
@@ -638,6 +924,43 @@
                         upload: '上传',
                         online: '在线',
                         offline: '离线',
+                        status: '状态',
+                        groups: '客户端分组',
+                        groupManager: '分组管理',
+                        createGroup: '创建分组',
+                        groupName: '分组名称',
+                        editGroup: '编辑分组',
+                        clients: '客户端',
+                        save: '保存',
+                        bindScripts: '绑定脚本组',
+                        boundScripts: '个脚本',
+                        runBoundScripts: '执行脚本',
+                        noScripts: '暂无脚本',
+                        executionMonitor: '执行监控',
+                        noActiveExecutions: '暂无活动执行任务',
+                        progress: '进度',
+                        latestLog: '最新日志',
+                        confirmRunGroup: '确定要为该分组执行所有绑定的脚本吗？',
+                        executionStarted: '执行已开始',
+                        viewLogs: '查看日志',
+                        liveLogs: '实时日志',
+                        back: '返回',
+                        updateManager: '更新管理',
+                        uploadUpdate: '上传更新包',
+                        version: '版本',
+                        platform: '平台',
+                        filename: '文件名',
+                        uploadedAt: '上传时间',
+                        noUpdates: '暂无更新包',
+                        deploy: '部署',
+                        delete: '删除',
+                        uploadUpdatePackage: '上传更新包',
+                        file: '文件',
+                        uploading: '上传中...',
+                        deployUpdate: '部署更新',
+                        selectClientsToUpdate: '选择要更新的客户端',
+                        startUpdate: '开始更新',
+                        updates: '更新管理',
                     }
                 }
 
@@ -663,9 +986,23 @@
                     }
                 }
 
+                const fetchServerInfo = async () => {
+                    try {
+                        const res = await fetch('/api/info')
+                        if (res.ok) {
+                            serverInfo.value = await res.json()
+                        }
+                    } catch (e) {
+                        console.error(e)
+                    }
+                }
+
                 // Polling for client list
                 setInterval(fetchClients, 5000)
-                onMounted(fetchClients)
+                onMounted(() => {
+                    fetchClients()
+                    fetchServerInfo()
+                })
 
                 const pollResult = async (cmdId) => {
                     const maxRetries = 600; // 5 minutes
@@ -965,6 +1302,145 @@
                     }
                 }
 
+                const fetchGroups = async () => {
+                    try {
+                        const res = await fetch('/api/groups')
+                        if (res.ok) {
+                            groupList.value = await res.json()
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch groups', e)
+                    }
+                }
+
+                const startExecutionPolling = () => {
+                    stopExecutionPolling()
+                    executionPollTimer = setInterval(async () => {
+                        if (activeModal.value !== 'executionMonitor') {
+                            stopExecutionPolling()
+                            return
+                        }
+                        try {
+                            const res = await fetch('/api/executions/active')
+                            if (res.ok) {
+                                executionList.value = await res.json()
+                            }
+                        } catch (e) {
+                            console.error(e)
+                        }
+                    }, 1000)
+                }
+
+                const stopExecutionPolling = () => {
+                    if (executionPollTimer) {
+                        clearInterval(executionPollTimer)
+                        executionPollTimer = null
+                    }
+                }
+
+                const runGroupScripts = async (group) => {
+                    if (!confirm(t('confirmRunGroup'))) return
+                    
+                    try {
+                        const res = await fetch(`/api/groups/${group.id}/run`, { method: 'POST' })
+                        if (res.ok) {
+                            alert(t('executionStarted'))
+                            activeModal.value = 'executionMonitor'
+                            executionList.value = []
+                            startExecutionPolling()
+                        } else {
+                            const txt = await res.text()
+                            alert('Failed: ' + txt)
+                        }
+                    } catch (e) {
+                        alert(e.message)
+                    }
+                }
+
+                const openGroupEditor = (group = null) => {
+                    activeModal.value = 'groupEditor'
+                    fetchScripts() // Ensure scripts are loaded
+                    if (group) {
+                        isCreatingGroup.value = false
+                        selectedGroup.value = group
+                        newGroup.value = { 
+                            name: group.name, // Name is not editable in update, only members
+                            client_ids: [...group.client_ids],
+                            script_ids: group.script_ids ? [...group.script_ids] : []
+                        }
+                    } else {
+                        isCreatingGroup.value = true
+                        selectedGroup.value = null
+                        newGroup.value = { name: '', client_ids: [], script_ids: [] }
+                    }
+                }
+
+                const saveGroup = async () => {
+                    try {
+                        let res;
+                        if (isCreatingGroup.value) {
+                            if (!newGroup.value.name) return alert('Name required')
+                            
+                            // 1. Create Group
+                            res = await fetch('/api/groups', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ name: newGroup.value.name })
+                            })
+                            
+                            if (res.ok) {
+                                const data = await res.json()
+                                // 2. Update Members & Scripts
+                                const updates = {}
+                                if (newGroup.value.client_ids.length > 0) updates.client_ids = newGroup.value.client_ids
+                                if (newGroup.value.script_ids.length > 0) updates.script_ids = newGroup.value.script_ids
+                                
+                                if (Object.keys(updates).length > 0) {
+                                    await fetch(`/api/groups/${data.id}`, {
+                                        method: 'PUT',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify(updates)
+                                    })
+                                }
+                            }
+                        } else {
+                            // Update Members & Scripts
+                            const updates = {
+                                client_ids: newGroup.value.client_ids,
+                                script_ids: newGroup.value.script_ids
+                            }
+                            res = await fetch(`/api/groups/${selectedGroup.value.id}`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(updates)
+                            })
+                        }
+                        
+                        if (res.ok) {
+                            await fetchGroups()
+                            closeModal()
+                        } else {
+                            alert('Failed to save group')
+                        }
+                    } catch (e) {
+                        alert(e.message)
+                    }
+                }
+
+                const deleteGroup = async (id) => {
+                    if (!confirm('Are you sure you want to delete this group?')) return;
+                    try {
+                        const res = await fetch(`/api/groups/${id}`, { method: 'DELETE' });
+                        if (res.ok) {
+                            await fetchGroups();
+                        } else {
+                            alert('Failed to delete group');
+                        }
+                    } catch (e) {
+                        alert(e.message);
+                    }
+                }
+
                 const openScriptEditor = (script = null) => {
                     activeModal.value = 'scriptEditor'
                     if (script) {
@@ -1119,40 +1595,6 @@
                     activeModal.value = 'logs'
                 }
 
-                const openUpdate = (client) => {
-                    selectedClient.value = client
-                    activeModal.value = 'update'
-                    updateUrl.value = ''
-                    updateStatus.value = null
-                }
-
-                const triggerUpdate = async () => {
-                    if (!updateUrl.value) {
-                        updateStatus.value = { type: 'error', message: 'Please enter a URL' }
-                        return
-                    }
-                    
-                    updateStatus.value = { type: 'info', message: 'Sending update command...' }
-                    
-                    try {
-                        // For update, we might not get a result back if the client restarts immediately.
-                        // So we set waitForResult to false or handle timeout gracefully.
-                        // But usually, download takes time, so we wait.
-                        // If client exits, the websocket closes, and server might not get "Success" response?
-                        // Let's try waiting. If it times out, it might mean success (client restarted).
-                        
-                        await sendCommand(selectedClient.value.id, { 
-                            cmd_type: 'UpdateClient', 
-                            args: { url: updateUrl.value } 
-                        })
-                        
-                        updateStatus.value = { type: 'success', message: 'Update command sent successfully. Client should restart.' }
-                    } catch (e) {
-                        // If timeout occurs, it's possible the client restarted during the process
-                        updateStatus.value = { type: 'error', message: `Update status unclear: ${e.message}` }
-                    }
-                }
-                
                 const navigateUp = () => {
                      const parts = currentPath.value.split(/[/\\]/);
                      parts.pop();
@@ -1160,6 +1602,101 @@
                      listFiles(newPath);
                 }
                 
+                const fetchUpdates = async () => {
+                    try {
+                        const res = await fetch('/api/updates')
+                        if (res.ok) {
+                            updateList.value = await res.json()
+                        }
+                    } catch (e) {
+                        console.error(e)
+                    }
+                }
+
+                const openUploadUpdateModal = () => {
+                    activeModal.value = 'uploadUpdate'
+                    newUpdate.value = { version: '', platform: 'windows' }
+                    if (updateFileInput.value) updateFileInput.value.value = ''
+                }
+
+                const uploadUpdate = async () => {
+                    if (!newUpdate.value.version || !updateFileInput.value?.files[0]) {
+                        return alert('Please fill all fields')
+                    }
+                    
+                    const formData = new FormData()
+                    formData.append('version', newUpdate.value.version)
+                    formData.append('platform', newUpdate.value.platform)
+                    formData.append('file', updateFileInput.value.files[0])
+                    
+                    commandLoading.value = true
+                    try {
+                        const res = await fetch('/api/updates', {
+                            method: 'POST',
+                            body: formData
+                        })
+                        
+                        if (res.ok) {
+                            alert('Update uploaded successfully')
+                            closeModal()
+                            fetchUpdates()
+                        } else {
+                            const txt = await res.text()
+                            alert('Upload failed: ' + txt)
+                        }
+                    } catch (e) {
+                        alert(e.message)
+                    } finally {
+                        commandLoading.value = false
+                    }
+                }
+
+                const deleteUpdate = async (id) => {
+                    if (!confirm('Are you sure you want to delete this update?')) return
+                    try {
+                        const res = await fetch(`/api/updates/${id}`, { method: 'DELETE' })
+                        if (res.ok) {
+                            fetchUpdates()
+                        } else {
+                            alert('Failed to delete update')
+                        }
+                    } catch (e) {
+                        alert(e.message)
+                    }
+                }
+
+                const openDeployUpdate = (upd) => {
+                    selectedUpdate.value = upd
+                    selectedClientIds.value = []
+                    activeModal.value = 'deployUpdate'
+                }
+
+                const triggerDeploy = async () => {
+                    if (!selectedUpdate.value || selectedClientIds.value.length === 0) return
+                    
+                    try {
+                        const res = await fetch('/api/updates/trigger', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                update_id: selectedUpdate.value.id,
+                                client_ids: selectedClientIds.value
+                            })
+                        })
+                        
+                        if (res.ok) {
+                            const msg = await res.text()
+                            alert(msg)
+                            closeModal()
+                        } else {
+                            const txt = await res.text()
+                            alert('Failed to trigger update: ' + txt)
+                        }
+                    } catch (e) {
+                        alert(e.message)
+                    }
+                }
+
                 const joinPath = (base, part) => {
                     if (base.endsWith('/') || base.endsWith('\\')) return base + part;
                     return base === '.' ? part : `${base}/${part}`;
@@ -1180,19 +1717,20 @@
                 }
 
                 return {
-                    clients, activeModal, selectedClient, commandLoading,
+                    clients, serverInfo, activeModal, selectedClient, commandLoading,
                     hardwareInfo, shellInput, shellOutput, shellFileInput, shellOutputRef,
                     currentPath, fileList, fileInput,
-                    updateUrl, updateStatus,
                     openHardware, openShell, runShellCommand, triggerShellUpload, handleShellUpload,
                     openFiles, listFiles, 
                     triggerFileUpload, handleFileUpload, downloadFromClient,
                     openEditor, closeEditor, saveFile, editorFile, editorContent,
                     openScripts, scriptList, selectedScript, isCreatingScript, newScript, scriptStatus,
                     openScriptEditor, saveScript, addStep, removeStep, deleteScript, openRunScript, executeScript,
+                    fetchGroups, groupList, selectedGroup, isCreatingGroup, newGroup, openGroupEditor, saveGroup, deleteGroup, runGroupScripts,
                     fetchHistory, historyList, viewLogs, selectedLogs, clearHistory,
+                    executionList, viewingExecutionId, viewingExecution,
                     selectedClientIds, currentView, fetchScripts,
-                    openUpdate, triggerUpdate,
+                    updateList, selectedUpdate, newUpdate, updateFileInput, fetchUpdates, openUploadUpdateModal, uploadUpdate, deleteUpdate, openDeployUpdate, triggerDeploy,
                     closeModal, formatBytes, navigateUp, joinPath,
                     isMaximized, toggleMaximize,
                     t, toggleLang, lang

@@ -11,7 +11,19 @@ pub struct AppState {
     pub db: Pool<Sqlite>,
     pub clients: DashMap<Uuid, ClientConnection>,
     pub results: DashMap<Uuid, CommandResult>,
+    pub active_executions: DashMap<Uuid, ExecutionProgress>,
     pub config: ServerConfig,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ExecutionProgress {
+    pub execution_id: Uuid,
+    pub script_name: String,
+    pub client_hostname: String,
+    pub status: String, // "running", "completed", "failed"
+    pub logs: Vec<String>,
+    pub current_step: usize,
+    pub total_steps: usize,
 }
 
 pub struct ClientConnection {
@@ -44,6 +56,7 @@ impl AppState {
             db,
             clients: DashMap::new(),
             results: DashMap::new(),
+            active_executions: DashMap::new(),
             config,
         }
     }

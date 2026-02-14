@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT client_id FROM client_group_members WHERE group_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "client_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "dbcb0376fe695db6a7854a6523ab24440981395da915b34e17ac1b7934084e20"
+}
