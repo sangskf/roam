@@ -29,21 +29,33 @@
         </header>
 
         <!-- Dashboard View -->
-        <div v-if="currentView === 'dashboard'" class="bg-white rounded-lg shadow-md overflow-hidden flex-1">
-            <table class="w-full text-left border-collapse">
-                <thead>
-                    <tr class="bg-gray-50 text-gray-700 text-sm">
-                        <th class="p-4 border-b w-1/6">{{ t('alias') }}</th>
-                        <th class="p-4 border-b w-1/6">{{ t('hostname') }}</th>
-                        <th class="p-4 border-b w-1/6">{{ t('status') }}</th>
-                        <th class="p-4 border-b w-1/6">{{ t('ipAddress') }}</th>
-                        <th class="p-4 border-b w-1/6">{{ t('os') }}</th>
-                        <th class="p-4 border-b w-1/6">{{ t('version') }}</th>
-                        <th class="p-4 border-b">{{ t('actions') }}</th>
-                    </tr>
-                </thead>
-                <tbody class="text-sm">
-                    <tr v-for="client in clients" :key="client.id" class="hover:bg-blue-50 border-b last:border-b-0 transition-colors">
+        <div v-if="currentView === 'dashboard'" class="bg-white rounded-lg shadow-md overflow-hidden flex-1 flex flex-col">
+            <div class="p-4 border-b bg-gray-50 flex gap-4 items-center">
+                <div class="relative flex-1 max-w-md">
+                    <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-500">🔍</span>
+                    <input v-model="searchQuery" type="text" :placeholder="t('searchPlaceholder')" class="w-full border rounded pl-10 pr-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+                <select v-model="statusFilter" class="border rounded px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none">
+                    <option value="all">{{ t('allStatus') }}</option>
+                    <option value="online">{{ t('online') }}</option>
+                    <option value="offline">{{ t('offline') }}</option>
+                </select>
+            </div>
+            <div class="flex-1 overflow-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead class="sticky top-0 bg-gray-50 z-10 shadow-sm">
+                        <tr class="text-gray-700 text-sm">
+                            <th class="p-4 border-b w-1/6">{{ t('alias') }}</th>
+                            <th class="p-4 border-b w-1/6">{{ t('hostname') }}</th>
+                            <th class="p-4 border-b w-1/6">{{ t('status') }}</th>
+                            <th class="p-4 border-b w-1/6">{{ t('ipAddress') }}</th>
+                            <th class="p-4 border-b w-1/6">{{ t('os') }}</th>
+                            <th class="p-4 border-b w-1/6">{{ t('version') }}</th>
+                            <th class="p-4 border-b">{{ t('actions') }}</th>
+                        </tr>
+                    </thead>
+                    <tbody class="text-sm">
+                        <tr v-for="client in filteredClients" :key="client.id" class="hover:bg-blue-50 border-b last:border-b-0 transition-colors">
                         <td class="p-4 font-medium">{{ client.alias || '-' }}</td>
                         <td class="p-4">{{ client.hostname }}</td>
                         <td class="p-4">
@@ -61,11 +73,12 @@
                             <button @click="openFiles(client)" :disabled="client.status === 'offline'" :class="['px-2 py-1 rounded border whitespace-nowrap', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-blue-600 hover:bg-blue-100 border-blue-200']">{{ t('files') }}</button>
                         </td>
                     </tr>
-                    <tr v-if="clients.length === 0">
+                    <tr v-if="filteredClients.length === 0">
                         <td colspan="6" class="p-12 text-center text-gray-400 italic">{{ t('noClients') }}</td>
                     </tr>
                 </tbody>
             </table>
+            </div>
         </div>
 
         <!-- Groups View -->
@@ -206,7 +219,7 @@
                             }">{{ item.status }}</span>
                         </td>
                         <td class="p-3">
-                            <button @click="viewLogs(item)" class="text-blue-600 hover:underline text-xs">View Logs</button>
+                            <button @click="viewLogs(item)" class="text-blue-600 hover:underline text-xs">{{ t('viewLogs') }}</button>
                         </td>
                     </tr>
                 </tbody>
@@ -251,9 +264,6 @@
                 <div class="flex justify-between items-center p-4 border-b bg-gray-50 rounded-t-lg">
                     <h3 class="font-bold text-lg">{{ t('remoteShell') }}: {{ selectedClient?.hostname }}</h3>
                     <div class="flex items-center gap-2">
-                         <button @click="triggerShellUpload" class="bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded text-xs flex items-center gap-1 mr-2">
-                            <span>⬆</span> {{ t('upload') }}
-                         </button>
                          <div class="flex items-center bg-white border rounded shadow-sm">
                              <button @click="toggleMaximize" class="px-3 py-1 hover:bg-gray-100 text-gray-600 border-r" :title="isMaximized ? t('restore') : t('maximize')">
                                 <span v-if="isMaximized">❐</span>
@@ -269,6 +279,9 @@
                 <form @submit.prevent="runShellCommand" class="flex gap-2 mx-4 mb-4">
                     <input v-model="shellInput" type="text" :placeholder="t('enterCommand')" class="flex-1 border rounded px-3 py-2 font-mono" autofocus>
                     <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">{{ t('run') }}</button>
+                    <button type="button" @click="triggerShellUpload" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded flex items-center gap-1" :title="t('upload')">
+                        {{ t('upload') }}
+                    </button>
                 </form>
                 <!-- Hidden file input for shell upload -->
                 <input type="file" ref="shellFileInput" class="hidden" @change="handleShellUpload">
@@ -509,10 +522,18 @@
 
         <!-- Log Viewer Modal -->
         <div v-if="activeModal === 'logs'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl flex flex-col max-h-[80vh]">
-                <div class="p-4 border-b flex justify-between items-center">
+            <div class="bg-white rounded-lg shadow-xl flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full max-w-2xl max-h-[80vh]'">
+                <div class="flex justify-between items-center p-4 border-b bg-gray-50 rounded-t-lg">
                     <h3 class="font-bold">{{ t('executionLogs') }}</h3>
-                    <button @click="closeModal" class="text-gray-500 hover:text-gray-700">✕</button>
+                    <div class="flex items-center bg-white border rounded shadow-sm">
+                         <button @click="toggleMaximize" class="px-3 py-1 hover:bg-gray-100 text-gray-600 border-r" :title="isMaximized ? t('restore') : t('maximize')">
+                            <span v-if="isMaximized">❐</span>
+                            <span v-else>☐</span>
+                        </button>
+                        <button @click="closeModal" class="px-3 py-1 hover:bg-red-500 hover:text-white text-gray-600" :title="t('close')">
+                            ✕
+                        </button>
+                    </div>
                 </div>
                 <div class="p-4 overflow-auto bg-gray-900 text-green-400 font-mono text-xs flex-1">
                     <div v-for="(log, i) in selectedLogs" :key="i" class="mb-1">{{ log }}</div>
@@ -665,6 +686,25 @@
                 const activeModal = ref(null)
                 const selectedClient = ref(null)
                 const commandLoading = ref(false)
+
+                // Dashboard Filter
+                const searchQuery = ref('')
+                const statusFilter = ref('all')
+
+                const filteredClients = computed(() => {
+                    return clients.value.filter(client => {
+                        const q = searchQuery.value.toLowerCase()
+                        const matchQuery = !q || 
+                            (client.hostname && client.hostname.toLowerCase().includes(q)) ||
+                            (client.alias && client.alias.toLowerCase().includes(q)) ||
+                            (client.ip && client.ip.includes(q)) ||
+                            (client.version && client.version.includes(q))
+                        
+                        const matchStatus = statusFilter.value === 'all' || client.status === statusFilter.value
+                        
+                        return matchQuery && matchStatus
+                    })
+                })
                 
                 // Hardware Info
                 const hardwareInfo = ref(null)
@@ -856,6 +896,8 @@
                         uploadDir: 'Upload Directory',
                         downloadDir: 'Download Directory',
                         updates: 'Updates',
+                        searchPlaceholder: 'Search hostname, alias, IP...',
+                        allStatus: 'All Status',
                     },
                     zh: {
                         dashboardTitle: 'Roam 控制台',
@@ -985,6 +1027,8 @@
                         uploadDir: '上传文件夹',
                         downloadDir: '下载文件夹',
                         updates: '更新管理',
+                        searchPlaceholder: '搜索主机名、别名、IP...',
+                        allStatus: '全部状态',
                     }
                 }
 
@@ -1625,6 +1669,7 @@
                 const viewLogs = (item) => {
                     selectedLogs.value = item.logs
                     activeModal.value = 'logs'
+                    isMaximized.value = false
                 }
 
                 const navigateUp = () => {
@@ -1750,6 +1795,7 @@
 
                 return {
                     clients, serverInfo, activeModal, selectedClient, commandLoading,
+                    searchQuery, statusFilter, filteredClients,
                     hardwareInfo, shellInput, shellOutput, shellFileInput, shellOutputRef,
                     currentPath, fileList, fileInput,
                     openHardware, openShell, runShellCommand, triggerShellUpload, handleShellUpload,
