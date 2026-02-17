@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use tracing::{info, error};
 use walkdir::WalkDir;
 use zip::write::FileOptions;
-use std::io::{Seek, Write};
 
 use common::{CommandPayload, CommandResult, HardwareInfo, FileInfo};
 

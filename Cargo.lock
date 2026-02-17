@@ -358,7 +358,6 @@ version = "0.1.7"
 dependencies = [
  "anyhow",
  "clap",
- "codepage",
  "common",
  "config",
  "dotenvy",
@@ -370,7 +369,6 @@ dependencies = [
  "serde",
  "serde_json",
  "service-manager",
- "sqlx",
  "sysinfo",
  "tokio",
  "tokio-tungstenite",
