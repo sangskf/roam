@@ -12,6 +12,7 @@ pub struct AppState {
     pub clients: DashMap<Uuid, ClientConnection>,
     pub results: DashMap<Uuid, CommandResult>,
     pub active_executions: DashMap<Uuid, ExecutionProgress>,
+    pub web_sessions: DashMap<String, String>, // token -> username
     pub config: ServerConfig,
 }
 
@@ -47,9 +48,9 @@ pub struct ScriptGroup {
 pub enum ScriptStep {
     Shell { cmd: String, args: Vec<String> },
     Upload { local_path: String, remote_path: String },
-    Download { remote_path: String },
+    Download { remote_path: String, browser_download: Option<bool> },
     UploadDir { local_path: String, remote_path: String },
-    DownloadDir { remote_path: String },
+    DownloadDir { remote_path: String, browser_download: Option<bool> },
 }
 
 impl AppState {
@@ -59,6 +60,7 @@ impl AppState {
             clients: DashMap::new(),
             results: DashMap::new(),
             active_executions: DashMap::new(),
+            web_sessions: DashMap::new(),
             config,
         }
     }

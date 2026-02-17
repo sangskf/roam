@@ -5,7 +5,14 @@ mod config;
 mod service;
 mod assets;
 
-use axum::{routing::{get, post}, Router, extract::DefaultBodyLimit};
+use axum::{
+    routing::{get, post},
+    Router,
+    extract::{DefaultBodyLimit, State, Request},
+    middleware::{self, Next},
+    response::{Response, IntoResponse},
+    http::{StatusCode, HeaderMap},
+};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -100,8 +107,14 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/updates/trigger", post(handlers::trigger_update_clients))
         .route("/api/history", get(handlers::get_script_history).delete(handlers::clear_script_history))
         .route("/ws", get(handlers::ws_handler))
+        // Auth Routes
+        .route("/api/auth/login", post(handlers::login))
+        .route("/api/auth/logout", post(handlers::logout))
+        .route("/api/auth/password", post(handlers::change_password))
+        .route("/api/auth/status", get(handlers::get_auth_status))
         .fallback(assets::static_handler)
         .layer(DefaultBodyLimit::max(1024 * 1024 * 1024 * 2)) // 2GB
+        .layer(middleware::from_fn_with_state(app_state.clone(), auth_middleware))
         .with_state(app_state);
 
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
@@ -110,4 +123,49 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
 
     Ok(())
+}
+
+async fn auth_middleware(
+    State(state): State<Arc<AppState>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if !state.config.web_auth_enabled {
+        return next.run(request).await;
+    }
+
+    let path = request.uri().path().to_string(); // Clone path to avoid borrow issues
+
+    // Allow static assets/fallback (not starting with /api)
+    if !path.starts_with("/api") {
+        return next.run(request).await;
+    }
+
+    // Allow login and status
+    if path == "/api/auth/login" || path == "/api/auth/status" {
+        return next.run(request).await;
+    }
+    
+    // Allow public API
+    // /api/info is public
+    if path.starts_with("/api/info") {
+         return next.run(request).await;
+    }
+
+    // /api/files/download and /api/files/client-upload are public (used by clients)
+    // /api/files/admin-upload should be protected
+    if path.starts_with("/api/files/download/") || path.starts_with("/api/files/client-upload/") {
+         return next.run(request).await;
+    }
+
+    let token = request.headers().get("Authorization")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.replace("Bearer ", ""))
+        .unwrap_or_default();
+
+    if state.web_sessions.contains_key(&token) {
+        next.run(request).await
+    } else {
+        (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
+    }
 }

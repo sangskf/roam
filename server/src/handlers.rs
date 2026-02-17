@@ -11,6 +11,8 @@ use uuid::Uuid;
 use tracing::{info, error, warn};
 use std::net::SocketAddr;
 use sqlx::Row;
+use sha2::{Sha256, Digest};
+use hex;
 
 use crate::state::{AppState, ClientConnection, ScriptGroup, ScriptStep, ExecutionProgress};
 use common::{Message, CommandPayload, CommandResult};
@@ -242,9 +244,10 @@ pub async fn run_group_scripts(
                 let client_id_str = client_id.to_string();
                 
                 // Create History Record
+                let now_utc = chrono::Utc::now();
                 if let Err(e) = sqlx::query!(
-                    "INSERT INTO execution_history (id, script_id, client_id, status) VALUES (?, ?, ?, ?)",
-                    history_id_str, script_id_str, client_id_str, "running"
+                    "INSERT INTO execution_history (id, script_id, client_id, status, started_at) VALUES (?, ?, ?, ?, ?)",
+                    history_id_str, script_id_str, client_id_str, "running", now_utc
                 ).execute(&state_clone.db).await {
                     error!("Failed to create history record: {}", e);
                     continue;
@@ -396,9 +399,10 @@ pub async fn run_script(
         let client_id_str = client_id.to_string();
         
         // Insert history record
+        let now_utc = chrono::Utc::now();
         if let Err(e) = sqlx::query!(
-            "INSERT INTO execution_history (id, script_id, client_id, status) VALUES (?, ?, ?, ?)",
-            history_id_str, script_id_str_run, client_id_str, "running"
+            "INSERT INTO execution_history (id, script_id, client_id, status, started_at) VALUES (?, ?, ?, ?, ?)",
+            history_id_str, script_id_str_run, client_id_str, "running", now_utc
         ).execute(&state.db).await {
             error!("Failed to create history record: {}", e);
             continue;
@@ -491,9 +495,20 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
                 let download_url = format!("http://{}/api/files/download/staging/{}", server_host, local_path);
                 Ok(CommandPayload::DownloadFile { url: download_url, dest_path: remote_path.clone() })
             },
-            ScriptStep::Download { remote_path } => {
+            ScriptStep::Download { remote_path, browser_download } => {
                 let upload_id = Uuid::new_v4();
                 let upload_url = format!("http://{}/api/files/client-upload/{}", server_host, upload_id);
+                
+                if browser_download.unwrap_or(false) {
+                    let file_name = std::path::Path::new(remote_path).file_name().unwrap_or_default().to_string_lossy();
+                    let download_link = format!("http://{}/api/files/download/client_data/{}/{}", server_host, upload_id, file_name);
+                    let log_msg = format!("BROWSER_DOWNLOAD: {}", download_link);
+                    logs.push(log_msg.clone());
+                    if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
+                        progress.logs.push(log_msg);
+                    }
+                }
+                
                 Ok(CommandPayload::UploadFile { src_path: remote_path.clone(), upload_url })
             },
             ScriptStep::UploadDir { local_path, remote_path } => {
@@ -510,15 +525,34 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
                     Err(e) => Err(format!("Failed to zip directory: {}", e))
                 }
             },
-            ScriptStep::DownloadDir { remote_path } => {
+            ScriptStep::DownloadDir { remote_path, browser_download } => {
                 let upload_id = Uuid::new_v4();
                 // Client will upload a zip file, server receives it as generic file upload
                 let upload_url = format!("http://{}/api/files/client-upload/{}", server_host, upload_id);
+                
+                if browser_download.unwrap_or(false) {
+                    let file_name = format!("{}.zip", std::path::Path::new(remote_path).file_name().unwrap_or_default().to_string_lossy());
+                    let download_link = format!("http://{}/api/files/download/client_data/{}/{}", server_host, upload_id, file_name);
+                    let log_msg = format!("BROWSER_DOWNLOAD: {}", download_link);
+                    logs.push(log_msg.clone());
+                    if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
+                        progress.logs.push(log_msg);
+                    }
+                }
+
                 Ok(CommandPayload::ZipAndUpload { src_path: remote_path.clone(), upload_url })
             }
         };
         
-        let log_start = format!("Step {}: Started", i + 1);
+        let step_desc = match step {
+            ScriptStep::Shell { cmd, args } => format!("Shell: {} {}", cmd, args.join(" ")),
+            ScriptStep::Upload { local_path, remote_path } => format!("Upload: {} -> {}", local_path, remote_path),
+            ScriptStep::Download { remote_path, .. } => format!("Download: {}", remote_path),
+            ScriptStep::UploadDir { local_path, remote_path } => format!("UploadDir: {} -> {}", local_path, remote_path),
+            ScriptStep::DownloadDir { remote_path, .. } => format!("DownloadDir: {}", remote_path),
+        };
+        
+        let log_start = format!("Step {}: Started - {}", i + 1, step_desc);
         logs.push(log_start.clone());
         if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
             progress.logs.push(log_start);
@@ -1168,4 +1202,157 @@ fn parse_message(msg: WsMessage) -> anyhow::Result<Message> {
         }
         _ => Err(anyhow::anyhow!("Unsupported message type")),
     }
+}
+
+// API: Auth
+#[derive(serde::Deserialize)]
+pub struct LoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct LoginResponse {
+    pub token: String,
+    pub username: String,
+}
+
+pub async fn login(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<LoginRequest>,
+) -> impl IntoResponse {
+    if !state.config.web_auth_enabled {
+        return (StatusCode::OK, Json(LoginResponse {
+            token: "auth-disabled".to_string(),
+            username: "admin".to_string(),
+        })).into_response();
+    }
+
+    // Verify password
+    let row = sqlx::query("SELECT id, password_hash FROM web_users WHERE username = ?")
+        .bind(&payload.username)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
+
+    if let Some(user) = row {
+        let password_hash: String = user.get("password_hash");
+        
+        let mut hasher = Sha256::new();
+        hasher.update(payload.password.as_bytes());
+        let hash = hex::encode(hasher.finalize());
+
+        if hash == password_hash {
+            let token = Uuid::new_v4().to_string();
+            state.web_sessions.insert(token.clone(), payload.username.clone());
+            return (StatusCode::OK, Json(LoginResponse {
+                token,
+                username: payload.username,
+            })).into_response();
+        }
+    }
+
+    (StatusCode::UNAUTHORIZED, "Invalid credentials").into_response()
+}
+
+#[derive(serde::Deserialize)]
+pub struct ChangePasswordRequest {
+    pub old_password: String,
+    pub new_password: String,
+}
+
+pub async fn change_password(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<ChangePasswordRequest>,
+) -> impl IntoResponse {
+    // Auth check
+    let token = headers.get("Authorization")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.replace("Bearer ", ""))
+        .unwrap_or_default();
+
+    let username = if state.config.web_auth_enabled {
+        if let Some(u) = state.web_sessions.get(&token) {
+            u.value().clone()
+        } else {
+             return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+        }
+    } else {
+        "admin".to_string()
+    };
+
+    // Verify old password
+    let row = sqlx::query("SELECT password_hash FROM web_users WHERE username = ?")
+        .bind(&username)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
+        
+    if let Some(user) = row {
+        let password_hash: String = user.get("password_hash");
+        
+        let mut hasher = Sha256::new();
+        hasher.update(payload.old_password.as_bytes());
+        let old_hash = hex::encode(hasher.finalize());
+        
+        if old_hash != password_hash {
+             return (StatusCode::BAD_REQUEST, "Incorrect old password").into_response();
+        }
+        
+        let mut hasher_new = Sha256::new();
+        hasher_new.update(payload.new_password.as_bytes());
+        let new_hash = hex::encode(hasher_new.finalize());
+        
+        if let Err(e) = sqlx::query("UPDATE web_users SET password_hash = ? WHERE username = ?")
+            .bind(new_hash)
+            .bind(username)
+            .execute(&state.db).await {
+                 return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to update password: {}", e)).into_response();
+        }
+        
+        return (StatusCode::OK, "Password updated").into_response();
+    }
+    
+    (StatusCode::BAD_REQUEST, "User not found").into_response()
+}
+
+#[derive(serde::Serialize)]
+pub struct AuthStatus {
+    pub enabled: bool,
+    pub username: Option<String>,
+}
+
+pub async fn get_auth_status(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Json<AuthStatus> {
+    let token = headers.get("Authorization")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.replace("Bearer ", ""))
+        .unwrap_or_default();
+        
+    let username = if state.config.web_auth_enabled {
+        state.web_sessions.get(&token).map(|u| u.value().clone())
+    } else {
+        Some("admin".to_string())
+    };
+    
+    Json(AuthStatus {
+        enabled: state.config.web_auth_enabled,
+        username,
+    })
+}
+
+pub async fn logout(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let token = headers.get("Authorization")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.replace("Bearer ", ""))
+        .unwrap_or_default();
+        
+    state.web_sessions.remove(&token);
+    (StatusCode::OK, "Logged out").into_response()
 }

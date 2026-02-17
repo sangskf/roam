@@ -77,6 +77,12 @@ pub async fn init_db(db_url: &str) -> anyhow::Result<Pool<Sqlite>> {
             platform TEXT NOT NULL,
             uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS web_users (
+            id TEXT PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL
+        );
         "#,
     )
     .execute(&pool)
@@ -86,6 +92,25 @@ pub async fn init_db(db_url: &str) -> anyhow::Result<Pool<Sqlite>> {
     let _ = sqlx::query("ALTER TABLE clients ADD COLUMN alias TEXT").execute(&pool).await;
     let _ = sqlx::query("ALTER TABLE clients ADD COLUMN ip TEXT").execute(&pool).await;
     let _ = sqlx::query("ALTER TABLE clients ADD COLUMN version TEXT").execute(&pool).await;
+
+    // Seed admin user if not exists
+    // Use runtime query to avoid compile-time check failure on fresh db
+    let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM web_users")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0);
+    
+    if user_count == 0 {
+        tracing::info!("Seeding default admin user...");
+        let id = uuid::Uuid::new_v4().to_string();
+        // SHA256("admin")
+        let hash = "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918";
+        let _ = sqlx::query("INSERT INTO web_users (id, username, password_hash) VALUES (?, ?, ?)")
+            .bind(id)
+            .bind("admin")
+            .bind(hash)
+            .execute(&pool).await;
+    }
 
     // Seed example scripts if table is empty
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM scripts")

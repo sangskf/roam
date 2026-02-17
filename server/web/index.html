@@ -29,6 +29,21 @@
                     <!-- Desktop Right Side -->
                     <div class="hidden md:flex items-center gap-4">
                         <span class="text-sm text-gray-500 whitespace-nowrap">{{ t('connectedClients') }}: {{ clients.length }}</span>
+                        
+                        <!-- Auth Menu -->
+                        <div v-if="authEnabled && isLoggedIn" class="relative group">
+                            <button class="flex items-center gap-1 text-sm font-medium hover:text-blue-600 focus:outline-none py-2">
+                                <span>{{ username }}</span>
+                                <span class="text-xs">▼</span>
+                            </button>
+                            <div class="absolute right-0 top-full pt-1 w-48 hidden group-hover:block z-50">
+                                <div class="bg-white rounded-md shadow-lg py-1 border">
+                                    <button @click="showPasswordModal = true" class="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">{{ t('changePassword') }}</button>
+                                    <button @click="logout" class="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100">{{ t('logout') }}</button>
+                                </div>
+                            </div>
+                        </div>
+
                         <button @click="toggleLang" class="bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded text-xs font-medium transition">
                             {{ t('switchLang') }}
                         </button>
@@ -56,6 +71,11 @@
                      <button @click="currentView = 'updates'; fetchUpdates(); isMenuOpen = false" :class="['block w-full text-left px-3 py-2 rounded-md text-base font-medium', currentView === 'updates' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50']">{{ t('updates') }}</button>
                 </div>
                 <div class="pt-4 pb-4 border-t border-gray-100 px-4">
+                    <div v-if="authEnabled && isLoggedIn" class="mb-3 border-b pb-3">
+                         <div class="font-bold text-gray-800 mb-2">{{ username }}</div>
+                         <button @click="showPasswordModal = true; isMenuOpen = false" class="block w-full text-left py-1 text-sm text-gray-600">{{ t('changePassword') }}</button>
+                         <button @click="logout" class="block w-full text-left py-1 text-sm text-red-600">{{ t('logout') }}</button>
+                    </div>
                     <div class="flex items-center justify-between">
                         <span class="text-sm text-gray-500">{{ t('connectedClients') }}: {{ clients.length }}</span>
                         <button @click="toggleLang" class="bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded text-xs font-medium">
@@ -530,7 +550,11 @@
                                         </div>
                                         <div v-if="step.type === 'Download'">
                                             <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('remotePath') }}</label>
-                                            <input v-model="step.remote_path" class="w-full border rounded px-2 py-1 text-sm" placeholder="/etc/passwd">
+                                            <input v-model="step.remote_path" class="w-full border rounded px-2 py-1 text-sm mb-2" placeholder="/etc/passwd">
+                                            <label class="flex items-center text-sm">
+                                                <input type="checkbox" v-model="step.browser_download" class="mr-2">
+                                                {{ t('browserDownload') }}
+                                            </label>
                                         </div>
                                         <div v-if="step.type === 'UploadDir'">
                                             <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('localPath') }}</label>
@@ -540,7 +564,11 @@
                                         </div>
                                         <div v-if="step.type === 'DownloadDir'">
                                             <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('remotePath') }}</label>
-                                            <input v-model="step.remote_path" class="w-full border rounded px-2 py-1 text-sm" placeholder="/var/log/app">
+                                            <input v-model="step.remote_path" class="w-full border rounded px-2 py-1 text-sm mb-2" placeholder="/var/log/app">
+                                            <label class="flex items-center text-sm">
+                                                <input type="checkbox" v-model="step.browser_download" class="mr-2">
+                                                {{ t('browserDownload') }}
+                                            </label>
                                         </div>
                                     </div>
                                 </div>
@@ -590,7 +618,12 @@
         <div v-if="activeModal === 'logs'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div class="bg-white rounded-lg shadow-xl flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full max-w-2xl max-h-[80vh]'">
                 <div class="flex justify-between items-center p-4 border-b bg-gray-50 rounded-t-lg">
-                    <h3 class="font-bold">{{ t('executionLogs') }}</h3>
+                    <h3 class="font-bold flex items-center gap-2">
+                        {{ t('executionLogs') }}
+                        <button @click="downloadLogFile" class="text-blue-600 hover:text-blue-800" title="Download Logs">
+                            <span class="text-sm">📥</span>
+                        </button>
+                    </h3>
                     <div class="flex items-center bg-white border rounded shadow-sm">
                          <button @click="toggleMaximize" class="px-3 py-1 hover:bg-gray-100 text-gray-600 border-r" :title="isMaximized ? t('restore') : t('maximize')">
                             <span v-if="isMaximized">❐</span>
@@ -602,7 +635,12 @@
                     </div>
                 </div>
                 <div class="p-4 overflow-auto bg-gray-900 text-green-400 font-mono text-xs flex-1">
-                    <div v-for="(log, i) in selectedLogs" :key="i" class="mb-1">{{ log }}</div>
+                    <div v-for="(log, i) in selectedLogs" :key="i" class="mb-1 whitespace-pre-wrap">
+                        {{ log }}
+                        <button v-if="log.includes('http://') || log.includes('https://')" @click="downloadArtifact(log)" class="ml-2 text-blue-300 hover:text-white underline text-xs">
+                            [{{ t('openLink') }}]
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -738,11 +776,59 @@
             </div>
         </div>
 
+        <!-- Login Modal -->
+        <div v-if="authEnabled && !isLoggedIn" class="fixed inset-0 bg-gray-100 flex items-center justify-center overflow-hidden" style="z-index: 100;">
+            <canvas id="login-canvas" class="absolute inset-0 w-full h-full"></canvas>
+            <div class="bg-white p-8 rounded-lg shadow-md w-full max-w-sm z-10 relative">
+                <h2 class="text-2xl font-bold mb-6 text-center text-blue-600">Roam Login</h2>
+                <form @submit.prevent="login">
+                    <div class="mb-4">
+                        <label class="block text-gray-700 text-sm font-bold mb-2">{{ t('username') }}</label>
+                        <input v-model="loginForm.username" class="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                    <div class="mb-6">
+                        <label class="block text-gray-700 text-sm font-bold mb-2">{{ t('password') }}</label>
+                        <input type="password" v-model="loginForm.password" class="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                    <button type="submit" class="w-full bg-blue-600 text-white font-bold py-2 px-4 rounded hover:bg-blue-700 transition">
+                        {{ t('login') }}
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Password Modal -->
+        <div v-if="showPasswordModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-lg w-full max-w-sm p-6">
+                <h3 class="text-xl font-bold mb-4">{{ t('changePassword') }}</h3>
+                <form @submit.prevent="changePassword">
+                    <div class="mb-4">
+                        <label class="block text-gray-700 text-sm font-bold mb-2">{{ t('oldPassword') }}</label>
+                        <input type="password" v-model="passwordForm.old_password" class="w-full border rounded px-3 py-2">
+                    </div>
+                    <div class="mb-6">
+                        <label class="block text-gray-700 text-sm font-bold mb-2">{{ t('newPassword') }}</label>
+                        <input type="password" v-model="passwordForm.new_password" class="w-full border rounded px-3 py-2">
+                    </div>
+                    <div class="flex justify-end gap-2">
+                        <button type="button" @click="showPasswordModal = false" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded">{{ t('cancel') }}</button>
+                        <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">{{ t('save') }}</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
 
     </div>
 
     <script>
         const { createApp, ref, onMounted, watch, nextTick, computed } = Vue
+
+        // Global Error Handler
+        window.onerror = function(msg, url, line, col, error) {
+            // alert('Error: ' + msg + '\n' + error);
+            console.error('Global Error:', msg, error);
+        };
 
         createApp({
             setup() {
@@ -752,6 +838,107 @@
                 const activeModal = ref(null)
                 const selectedClient = ref(null)
                 const commandLoading = ref(false)
+
+                // Auth
+                const authEnabled = ref(true) // Default to true (secure by default)
+                const isLoggedIn = ref(false)
+                const username = ref('')
+                const loginForm = ref({ username: '', password: '' })
+                const passwordForm = ref({ old_password: '', new_password: '' })
+                const showPasswordModal = ref(false)
+
+                const checkAuth = async () => {
+                    try {
+                        const token = localStorage.getItem('auth_token')
+                        const headers = token ? { 'Authorization': `Bearer ${token}` } : {}
+                        // Add cache busting
+                        const res = await fetch('/api/auth/status?t=' + Date.now(), { headers })
+                        if (res.ok) {
+                            const data = await res.json()
+                            console.log('Auth Status:', data)
+                            authEnabled.value = data.enabled
+                            if (data.enabled) {
+                                if (data.username) {
+                                    isLoggedIn.value = true
+                                    username.value = data.username
+                                } else {
+                                    isLoggedIn.value = false
+                                    username.value = ''
+                                }
+                            } else {
+                                isLoggedIn.value = true
+                            }
+                        } else {
+                            console.error('Auth check failed with status:', res.status)
+                        }
+                    } catch (e) {
+                        console.error('Auth check failed', e)
+                    }
+                }
+
+                const login = async () => {
+                    try {
+                        const res = await fetch('/api/auth/login', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(loginForm.value)
+                        })
+                        if (res.ok) {
+                            const data = await res.json()
+                            localStorage.setItem('auth_token', data.token)
+                            isLoggedIn.value = true
+                            username.value = data.username
+                            loginForm.value = { username: '', password: '' }
+                            fetchClients()
+                            fetchGroups()
+                            fetchScripts()
+                            fetchHistory()
+                            fetchUpdates()
+                        } else {
+                            alert(t('loginFailed'))
+                        }
+                    } catch (e) {
+                        alert(e.message)
+                    }
+                }
+
+                const logout = async () => {
+                    try {
+                        const token = localStorage.getItem('auth_token')
+                        await fetch('/api/auth/logout', {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${token}` }
+                        })
+                    } catch (e) {}
+                    localStorage.removeItem('auth_token')
+                    isLoggedIn.value = false
+                    username.value = ''
+                    window.location.reload()
+                }
+
+                const changePassword = async () => {
+                    try {
+                        const token = localStorage.getItem('auth_token')
+                        const res = await fetch('/api/auth/password', {
+                            method: 'POST',
+                            headers: { 
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${token}`
+                            },
+                            body: JSON.stringify(passwordForm.value)
+                        })
+                        if (res.ok) {
+                            alert(t('passwordChanged'))
+                            showPasswordModal.value = false
+                            passwordForm.value = { old_password: '', new_password: '' }
+                        } else {
+                            const txt = await res.text()
+                            alert(t('passwordChangeFailed') + ': ' + txt)
+                        }
+                    } catch (e) {
+                        alert(e.message)
+                    }
+                }
 
                 // Dashboard Filter
                 const searchQuery = ref('')
@@ -945,6 +1132,7 @@
                         confirmRunGroup: 'Are you sure you want to run bound scripts for this group?',
                         executionStarted: 'Execution started',
                         viewLogs: 'View Logs',
+                        downloadLogs: 'Download Logs',
                         liveLogs: 'Live Logs',
                         back: 'Back',
                         updateManager: 'Update Manager',
@@ -964,11 +1152,23 @@
                         startUpdate: 'Start Update',
                         uploadFile: 'Upload File',
                         downloadFile: 'Download File',
+                        browserDownload: 'Direct Browser Download',
                         uploadDir: 'Upload Directory',
                         downloadDir: 'Download Directory',
                         updates: 'Updates',
                         searchPlaceholder: 'Search hostname, alias, IP...',
                         allStatus: 'All Status',
+                        openLink: 'Open Link',
+                        login: 'Login',
+                        username: 'Username',
+                        password: 'Password',
+                        loginFailed: 'Login Failed',
+                        logout: 'Logout',
+                        changePassword: 'Change Password',
+                        oldPassword: 'Old Password',
+                        newPassword: 'New Password',
+                        passwordChanged: 'Password changed successfully',
+                        passwordChangeFailed: 'Failed to change password',
                     },
                     zh: {
                         dashboardTitle: 'Roam 控制台',
@@ -1076,6 +1276,7 @@
                         confirmRunGroup: '确定要为该分组执行所有绑定的脚本吗？',
                         executionStarted: '执行已开始',
                         viewLogs: '查看日志',
+                        downloadLogs: '下载日志',
                         liveLogs: '实时日志',
                         back: '返回',
                         updateManager: '更新管理',
@@ -1095,11 +1296,23 @@
                         startUpdate: '开始更新',
                         uploadFile: '上传文件',
                         downloadFile: '下载文件',
+                        browserDownload: '使用浏览器直接下载',
                         uploadDir: '上传文件夹',
                         downloadDir: '下载文件夹',
                         updates: '更新管理',
                         searchPlaceholder: '搜索主机名、别名、IP...',
                         allStatus: '全部状态',
+                        openLink: '打开链接',
+                        login: '登录',
+                        username: '用户名',
+                        password: '密码',
+                        loginFailed: '登录失败',
+                        logout: '退出登录',
+                        changePassword: '修改密码',
+                        oldPassword: '旧密码',
+                        newPassword: '新密码',
+                        passwordChanged: '密码修改成功',
+                        passwordChangeFailed: '密码修改失败',
                     }
                 }
 
@@ -1117,37 +1330,58 @@
                 }
 
                 const fetchClients = async () => {
+                    if (authEnabled.value && !isLoggedIn.value) return
                     try {
-                        const res = await fetch('/api/clients')
-                        clients.value = await res.json()
+                        const res = await apiFetch('/api/clients')
+                        if (res.ok) {
+                            clients.value = await res.json()
+                        }
                     } catch (e) {
-                        console.error(e)
+                        if (e.message !== 'Unauthorized') console.error(e)
                     }
                 }
 
                 const fetchServerInfo = async () => {
                     try {
-                        const res = await fetch('/api/info')
+                        const res = await apiFetch('/api/info')
                         if (res.ok) {
                             serverInfo.value = await res.json()
                         }
                     } catch (e) {
-                        console.error(e)
+                        if (e.message !== 'Unauthorized') console.error(e)
                     }
                 }
 
                 // Polling for client list
                 setInterval(fetchClients, 5000)
                 onMounted(() => {
-                    fetchClients()
+                    checkAuth()
+                    // fetchClients() - will be handled by interval or after login
                     fetchServerInfo()
                 })
+
+                const getAuthHeaders = () => {
+                    const token = localStorage.getItem('auth_token')
+                    return token ? { 'Authorization': `Bearer ${token}` } : {}
+                }
+
+                const apiFetch = async (url, options = {}) => {
+                    const headers = { ...getAuthHeaders(), ...(options.headers || {}) }
+                    const res = await fetch(url, { ...options, headers })
+                    if (res.status === 401 && authEnabled.value) {
+                        isLoggedIn.value = false
+                        username.value = ''
+                        localStorage.removeItem('auth_token')
+                        throw new Error('Unauthorized')
+                    }
+                    return res
+                }
 
                 const pollResult = async (cmdId) => {
                     const maxRetries = 600; // 5 minutes
                     for (let i = 0; i < maxRetries; i++) {
                         try {
-                            const res = await fetch(`/api/commands/${cmdId}/result`);
+                            const res = await apiFetch(`/api/commands/${cmdId}/result`);
                             if (res.ok) {
                                 const result = await res.json();
                                 return result;
@@ -1161,7 +1395,7 @@
                 const sendCommand = async (clientId, payload, waitForResult = true) => {
                     commandLoading.value = true
                     try {
-                        const res = await fetch(`/api/clients/${clientId}/command`, {
+                        const res = await apiFetch(`/api/clients/${clientId}/command`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ cmd: payload })
@@ -1251,7 +1485,7 @@
                     shellOutput.value += `\n> Uploading ${file.name}...\n`
                     
                     try {
-                        const res = await fetch('/api/files/admin-upload', {
+                        const res = await apiFetch('/api/files/admin-upload', {
                             method: 'POST',
                             body: formData
                         })
@@ -1326,7 +1560,7 @@
                     
                     commandLoading.value = true
                     try {
-                        const res = await fetch('/api/files/admin-upload', {
+                        const res = await apiFetch('/api/files/admin-upload', {
                             method: 'POST',
                             body: formData
                         })
@@ -1439,7 +1673,7 @@
 
                 const fetchScripts = async () => {
                     try {
-                        const res = await fetch('/api/scripts')
+                        const res = await apiFetch('/api/scripts')
                         if (res.ok) {
                             scriptList.value = await res.json()
                         }
@@ -1450,7 +1684,7 @@
 
                 const fetchGroups = async () => {
                     try {
-                        const res = await fetch('/api/groups')
+                        const res = await apiFetch('/api/groups')
                         if (res.ok) {
                             groupList.value = await res.json()
                         }
@@ -1467,7 +1701,7 @@
                             return
                         }
                         try {
-                            const res = await fetch('/api/executions/active')
+                            const res = await apiFetch('/api/executions/active')
                             if (res.ok) {
                                 executionList.value = await res.json()
                             }
@@ -1488,7 +1722,7 @@
                     if (!confirm(t('confirmRunGroup'))) return
                     
                     try {
-                        const res = await fetch(`/api/groups/${group.id}/run`, { method: 'POST' })
+                        const res = await apiFetch(`/api/groups/${group.id}/run`, { method: 'POST' })
                         if (res.ok) {
                             alert(t('executionStarted'))
                             activeModal.value = 'executionMonitor'
@@ -1528,7 +1762,7 @@
                             if (!newGroup.value.name) return alert('Name required')
                             
                             // 1. Create Group
-                            res = await fetch('/api/groups', {
+                            res = await apiFetch('/api/groups', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ name: newGroup.value.name })
@@ -1542,7 +1776,7 @@
                                 if (newGroup.value.script_ids.length > 0) updates.script_ids = newGroup.value.script_ids
                                 
                                 if (Object.keys(updates).length > 0) {
-                                    await fetch(`/api/groups/${data.id}`, {
+                                    await apiFetch(`/api/groups/${data.id}`, {
                                         method: 'PUT',
                                         headers: { 'Content-Type': 'application/json' },
                                         body: JSON.stringify(updates)
@@ -1555,7 +1789,7 @@
                                 client_ids: newGroup.value.client_ids,
                                 script_ids: newGroup.value.script_ids
                             }
-                            res = await fetch(`/api/groups/${selectedGroup.value.id}`, {
+                            res = await apiFetch(`/api/groups/${selectedGroup.value.id}`, {
                                 method: 'PUT',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify(updates)
@@ -1576,7 +1810,7 @@
                 const deleteGroup = async (id) => {
                     if (!confirm('Are you sure you want to delete this group?')) return;
                     try {
-                        const res = await fetch(`/api/groups/${id}`, { method: 'DELETE' });
+                        const res = await apiFetch(`/api/groups/${id}`, { method: 'DELETE' });
                         if (res.ok) {
                             await fetchGroups();
                         } else {
@@ -1602,11 +1836,11 @@
                             } else if (s.type === 'Upload') {
                                 return { type: 'Upload', local_path: s.payload.local_path, remote_path: s.payload.remote_path }
                             } else if (s.type === 'Download') {
-                                return { type: 'Download', remote_path: s.payload.remote_path }
+                                return { type: 'Download', remote_path: s.payload.remote_path, browser_download: s.payload.browser_download || false }
                             } else if (s.type === 'UploadDir') {
                                 return { type: 'UploadDir', local_path: s.payload.local_path, remote_path: s.payload.remote_path }
                             } else if (s.type === 'DownloadDir') {
-                                return { type: 'DownloadDir', remote_path: s.payload.remote_path }
+                                return { type: 'DownloadDir', remote_path: s.payload.remote_path, browser_download: s.payload.browser_download || false }
                             }
                             return s
                         })
@@ -1636,11 +1870,11 @@
                         } else if (s.type === 'Upload') {
                             return { type: 'Upload', payload: { local_path: s.local_path, remote_path: s.remote_path } }
                         } else if (s.type === 'Download') {
-                            return { type: 'Download', payload: { remote_path: s.remote_path } }
+                            return { type: 'Download', payload: { remote_path: s.remote_path, browser_download: s.browser_download } }
                         } else if (s.type === 'UploadDir') {
                             return { type: 'UploadDir', payload: { local_path: s.local_path, remote_path: s.remote_path } }
                         } else if (s.type === 'DownloadDir') {
-                            return { type: 'DownloadDir', payload: { remote_path: s.remote_path } }
+                            return { type: 'DownloadDir', payload: { remote_path: s.remote_path, browser_download: s.browser_download } }
                         }
                         return null
                     }).filter(s => s)
@@ -1650,13 +1884,13 @@
                     try {
                         let res;
                         if (isCreatingScript.value) {
-                             res = await fetch('/api/scripts', {
+                             res = await apiFetch('/api/scripts', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify(payload)
                             })
                         } else {
-                             res = await fetch(`/api/scripts/${selectedScript.value.id}`, {
+                             res = await apiFetch(`/api/scripts/${selectedScript.value.id}`, {
                                 method: 'PUT',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify(payload)
@@ -1677,7 +1911,7 @@
                 const deleteScript = async (id) => {
                     if (!confirm('Are you sure you want to delete this script?')) return;
                     try {
-                        const res = await fetch(`/api/scripts/${id}`, { method: 'DELETE' });
+                        const res = await apiFetch(`/api/scripts/${id}`, { method: 'DELETE' });
                         if (res.ok) {
                             await fetchScripts();
                         } else {
@@ -1698,7 +1932,7 @@
                     if (!selectedScript.value || selectedClientIds.value.length === 0) return
                     
                     try {
-                        const res = await fetch(`/api/scripts/${selectedScript.value.id}/run`, {
+                        const res = await apiFetch(`/api/scripts/${selectedScript.value.id}/run`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ client_ids: selectedClientIds.value })
@@ -1720,7 +1954,7 @@
 
                 const fetchHistory = async () => {
                     try {
-                        const res = await fetch('/api/history')
+                        const res = await apiFetch('/api/history')
                         if (res.ok) {
                             historyList.value = await res.json()
                         }
@@ -1732,7 +1966,7 @@
                 const clearHistory = async () => {
                     if (!confirm(t('clearLogs') + '?')) return
                     try {
-                        const res = await fetch('/api/history', { method: 'DELETE' })
+                        const res = await apiFetch('/api/history', { method: 'DELETE' })
                         if (res.ok) {
                             alert(t('logsCleared'))
                             fetchHistory()
@@ -1746,9 +1980,96 @@
                 
                 const viewLogs = (item) => {
                     selectedLogs.value = item.logs
+                    // Extract execution ID from item or use a temp one if not present (though history items should have one)
+                    // If the item comes from history list, it has an ID.
+                    // We'll use a reactive variable to hold the current item for context in the modal
+                    currentLogItem.value = item
                     activeModal.value = 'logs'
                     isMaximized.value = false
                 }
+
+                const currentLogItem = ref(null)
+
+                const downloadLogFile = () => {
+                    if (!currentLogItem.value) return
+                    const content = selectedLogs.value.join('\n')
+                    const blob = new Blob([content], { type: 'text/plain' })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement('a')
+                    a.href = url
+                    // Filename: logs_{script_name}_{client}_{time}.txt
+                    const time = new Date(currentLogItem.value.started_at || Date.now()).toISOString().replace(/[:.]/g, '-')
+                    a.download = `logs_${currentLogItem.value.script_name || 'script'}_${currentLogItem.value.client_hostname || 'client'}_${time}.txt`
+                    document.body.appendChild(a)
+                    a.click()
+                    document.body.removeChild(a)
+                    URL.revokeObjectURL(url)
+                }
+
+                const downloadArtifact = (logLine) => {
+                    // Try to parse artifact URL from log line
+                    // Format usually: "File uploaded successfully: http://.../api/files/client-upload/..."
+                    // Or "BROWSER_DOWNLOAD: http://..."
+                    
+                    let url = null;
+                    let isDownload = false;
+
+                    if (logLine.includes('BROWSER_DOWNLOAD:')) {
+                        const parts = logLine.split('BROWSER_DOWNLOAD:');
+                        if (parts.length > 1) {
+                            url = parts[1].trim();
+                            isDownload = true;
+                        }
+                    } else {
+                         const match = logLine.match(/http:\/\/[^\s]+/)
+                         if (match) {
+                              url = match[0]
+                         }
+                    }
+
+                    if (url) {
+                         if (isDownload) {
+                             const a = document.createElement('a');
+                             a.href = url;
+                             a.download = ''; 
+                             document.body.appendChild(a);
+                             a.click();
+                             document.body.removeChild(a);
+                         } else {
+                             window.open(url, '_blank')
+                         }
+                    }
+                }
+
+                // Automatic Browser Download
+                const processedDownloads = new Set();
+                
+                watch(executionList, (newVal) => {
+                    if (!newVal) return;
+                    
+                    newVal.forEach(exec => {
+                        if (!exec.logs) return;
+                        
+                        exec.logs.forEach(log => {
+                            if (log.includes('BROWSER_DOWNLOAD:')) {
+                                const parts = log.split('BROWSER_DOWNLOAD:');
+                                if (parts.length > 1) {
+                                    const url = parts[1].trim();
+                                    if (!processedDownloads.has(url)) {
+                                        processedDownloads.add(url);
+                                        // Trigger download
+                                        const a = document.createElement('a');
+                                        a.href = url;
+                                        a.download = ''; 
+                                        document.body.appendChild(a);
+                                        a.click();
+                                        document.body.removeChild(a);
+                                    }
+                                }
+                            }
+                        });
+                    });
+                }, { deep: true });
 
                 const navigateUp = () => {
                      const parts = currentPath.value.split(/[/\\]/);
@@ -1759,7 +2080,7 @@
                 
                 const fetchUpdates = async () => {
                     try {
-                        const res = await fetch('/api/updates')
+                        const res = await apiFetch('/api/updates')
                         if (res.ok) {
                             updateList.value = await res.json()
                         }
@@ -1786,7 +2107,7 @@
                     
                     commandLoading.value = true
                     try {
-                        const res = await fetch('/api/updates', {
+                        const res = await apiFetch('/api/updates', {
                             method: 'POST',
                             body: formData
                         })
@@ -1809,7 +2130,7 @@
                 const deleteUpdate = async (id) => {
                     if (!confirm('Are you sure you want to delete this update?')) return
                     try {
-                        const res = await fetch(`/api/updates/${id}`, { method: 'DELETE' })
+                        const res = await apiFetch(`/api/updates/${id}`, { method: 'DELETE' })
                         if (res.ok) {
                             fetchUpdates()
                         } else {
@@ -1830,7 +2151,7 @@
                     if (!selectedUpdate.value || selectedClientIds.value.length === 0) return
                     
                     try {
-                        const res = await fetch('/api/updates/trigger', {
+                        const res = await apiFetch('/api/updates/trigger', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
@@ -1871,6 +2192,119 @@
                     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`
                 }
 
+                // Spider Web Effect for Login Page
+                const initSpiderWeb = () => {
+                    const canvas = document.getElementById('login-canvas');
+                    if (!canvas) return;
+
+                    const ctx = canvas.getContext('2d');
+                    let width, height;
+                    let particles = [];
+                    
+                    const resize = () => {
+                        width = canvas.width = window.innerWidth;
+                        height = canvas.height = window.innerHeight;
+                    };
+                    
+                    window.addEventListener('resize', resize);
+                    resize();
+
+                    const mouse = { x: null, y: null };
+                    
+                    canvas.addEventListener('mousemove', (e) => {
+                        const rect = canvas.getBoundingClientRect();
+                        mouse.x = e.clientX - rect.left;
+                        mouse.y = e.clientY - rect.top;
+                    });
+                    
+                    canvas.addEventListener('mouseleave', () => {
+                        mouse.x = null;
+                        mouse.y = null;
+                    });
+
+                    // Init particles
+                    for (let i = 0; i < 80; i++) {
+                        particles.push({
+                            x: Math.random() * width,
+                            y: Math.random() * height,
+                            vx: (Math.random() - 0.5) * 1.5,
+                            vy: (Math.random() - 0.5) * 1.5,
+                            size: Math.random() * 3 + 1
+                        });
+                    }
+
+                    const animate = () => {
+                        if (!document.getElementById('login-canvas')) return;
+                        
+                        ctx.clearRect(0, 0, width, height);
+                        
+                        particles.forEach((p, index) => {
+                            p.x += p.vx;
+                            p.y += p.vy;
+
+                            // Bounce
+                            if (p.x < 0 || p.x > width) p.vx *= -1;
+                            if (p.y < 0 || p.y > height) p.vy *= -1;
+
+                            // Draw dot
+                            ctx.beginPath();
+                            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                            ctx.fillStyle = '#9ca3af'; // gray-400
+                            ctx.fill();
+
+                            // Connections between particles
+                            for (let j = index + 1; j < particles.length; j++) {
+                                const p2 = particles[j];
+                                const dx = p.x - p2.x;
+                                const dy = p.y - p2.y;
+                                const dist = Math.sqrt(dx * dx + dy * dy);
+
+                                if (dist < 150) {
+                                    ctx.beginPath();
+                                    ctx.strokeStyle = `rgba(156, 163, 175, ${1 - dist / 150})`;
+                                    ctx.lineWidth = 0.5;
+                                    ctx.moveTo(p.x, p.y);
+                                    ctx.lineTo(p2.x, p2.y);
+                                    ctx.stroke();
+                                }
+                            }
+                            
+                            // Mouse interaction
+                            if (mouse.x != null) {
+                                const dx = p.x - mouse.x;
+                                const dy = p.y - mouse.y;
+                                const dist = Math.sqrt(dx * dx + dy * dy);
+                                if (dist < 200) {
+                                     ctx.beginPath();
+                                     ctx.strokeStyle = `rgba(37, 99, 235, ${1 - dist / 200})`; // blue-500
+                                     ctx.lineWidth = 1;
+                                     ctx.moveTo(p.x, p.y);
+                                     ctx.lineTo(mouse.x, mouse.y);
+                                     ctx.stroke();
+                                     
+                                     // Attraction
+                                     const force = (200 - dist) / 200;
+                                     if(dist > 50) {
+                                         p.vx -= dx * force * 0.0005;
+                                         p.vy -= dy * force * 0.0005;
+                                     }
+                                }
+                            }
+                        });
+
+                        requestAnimationFrame(animate);
+                    };
+
+                    animate();
+                };
+
+                watch([authEnabled, isLoggedIn], async ([enabled, loggedIn]) => {
+                    if (enabled && !loggedIn) {
+                        await nextTick();
+                        initSpiderWeb();
+                    }
+                }, { immediate: true });
+
                 return {
                     clients, serverInfo, activeModal, selectedClient, commandLoading,
                     searchQuery, statusFilter, filteredClients,
@@ -1889,7 +2323,11 @@
                     updateList, selectedUpdate, newUpdate, updateFileInput, fetchUpdates, openUploadUpdateModal, uploadUpdate, deleteUpdate, openDeployUpdate, triggerDeploy,
                     closeModal, formatBytes, navigateUp, joinPath,
                     isMaximized, toggleMaximize, isMenuOpen, toggleMenu,
-                    t, toggleLang, lang
+                    t, toggleLang, lang,
+                    currentLogItem, downloadLogFile, downloadArtifact,
+                    // Auth exports
+                    authEnabled, isLoggedIn, username, loginForm, passwordForm, showPasswordModal,
+                    login, logout, changePassword
                 }
             }
         }).mount('#app')

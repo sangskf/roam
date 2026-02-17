@@ -9,7 +9,7 @@ axum = { version = "0.7", features = ["ws", "multipart"] }
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-native-tls", "macros"] }
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-native-tls", "macros", "chrono"] }
 tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -26,3 +26,6 @@ rust-embed = "8.11.0"
 mime_guess = "2.0.5"
 zip = "0.6.6"
 walkdir = "2.5.0"
+chrono = "0.4.43"
+sha2 = "0.10.9"
+hex = "0.4.3"
