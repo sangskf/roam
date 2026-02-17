@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, version, filename, platform, CAST(uploaded_at AS TEXT) as uploaded_at FROM client_updates ORDER BY uploaded_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "version",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "filename",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "platform",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "uploaded_at",
+        "ordinal": 4,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "b0e0e8d085fab74ab7b591e2aed46ccd79f0304f173365fe5bdc54814bedf7a4"
+}

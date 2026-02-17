@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO group_scripts (group_id, script_id) VALUES (?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "544fad633615f26bcc8a60867a787362ad3d452fdecc73db1ad84d41a895093d"
+}

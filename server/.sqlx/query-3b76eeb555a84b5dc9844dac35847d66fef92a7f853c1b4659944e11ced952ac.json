@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT filename FROM client_updates WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "filename",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3b76eeb555a84b5dc9844dac35847d66fef92a7f853c1b4659944e11ced952ac"
+}

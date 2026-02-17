@@ -138,7 +138,7 @@ async fn connect_and_run(client_id: Uuid, hostname: &str, os: &str, version: &st
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Message>(100);
 
     // Heartbeat Task
-    let _heartbeat_task = {
+    let heartbeat_task = {
         let interval = config.heartbeat_interval_sec;
         let tx = tx.clone();
         tokio::spawn(async move {
