@@ -170,8 +170,15 @@ pub async fn update_group(
 pub async fn run_group_scripts(
     State(state): State<Arc<AppState>>,
     Path(group_id): Path<Uuid>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     let group_id_str = group_id.to_string();
+    
+    // Determine server host
+    let host = headers.get("host")
+        .and_then(|h| h.to_str().ok())
+        .map(|h| h.to_string())
+        .unwrap_or_else(|| format!("{}:{}", state.config.host, state.config.port));
     
     // 1. Fetch Group Members
     let members = match sqlx::query!("SELECT client_id FROM client_group_members WHERE group_id = ?", group_id_str)
@@ -225,6 +232,7 @@ pub async fn run_group_scripts(
 
         let state_clone = state.clone();
         let scripts_clone = scripts.clone();
+        let host_clone = host.clone();
         
         tokio::spawn(async move {
             for script in scripts_clone {
@@ -242,7 +250,7 @@ pub async fn run_group_scripts(
                     continue;
                 }
 
-                run_script_task(state_clone.clone(), client_id, script, history_id).await;
+                run_script_task(state_clone.clone(), client_id, script, history_id, host_clone.clone()).await;
             }
         });
     }
@@ -349,9 +357,17 @@ pub struct RunScriptRequest {
 pub async fn run_script(
     State(state): State<Arc<AppState>>,
     Path(script_id): Path<Uuid>,
+    headers: HeaderMap,
     Json(payload): Json<RunScriptRequest>,
 ) -> impl IntoResponse {
     let script_id_str = script_id.to_string();
+    
+    // Determine server host
+    let host = headers.get("host")
+        .and_then(|h| h.to_str().ok())
+        .map(|h| h.to_string())
+        .unwrap_or_else(|| format!("{}:{}", state.config.host, state.config.port));
+
     // Fetch script from DB
     let row = match sqlx::query!("SELECT name, steps FROM scripts WHERE id = ?", script_id_str)
         .fetch_optional(&state.db)
@@ -390,8 +406,9 @@ pub async fn run_script(
 
         let state_clone = state.clone();
         let script_clone = script.clone();
+        let host_clone = host.clone();
         tokio::spawn(async move {
-            run_script_task(state_clone, client_id, script_clone, history_id).await;
+            run_script_task(state_clone, client_id, script_clone, history_id, host_clone).await;
         });
     }
 
@@ -437,7 +454,7 @@ fn zip_directory(src_dir: &str, dst_file: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGroup, history_id: Uuid) {
+async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGroup, history_id: Uuid, server_host: String) {
     info!("Starting script {} on client {}", script.name, client_id);
     
     // Get client hostname for progress
@@ -471,14 +488,12 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
         let cmd_payload_result = match step {
             ScriptStep::Shell { cmd, args } => Ok(CommandPayload::ShellExec { cmd: cmd.clone(), args: args.clone() }),
             ScriptStep::Upload { local_path, remote_path } => {
-                let host = format!("{}:{}", state.config.host, state.config.port);
-                let download_url = format!("http://{}/api/files/download/staging/{}", host, local_path);
+                let download_url = format!("http://{}/api/files/download/staging/{}", server_host, local_path);
                 Ok(CommandPayload::DownloadFile { url: download_url, dest_path: remote_path.clone() })
             },
             ScriptStep::Download { remote_path } => {
                 let upload_id = Uuid::new_v4();
-                let host = format!("{}:{}", state.config.host, state.config.port);
-                let upload_url = format!("http://{}/api/files/client-upload/{}", host, upload_id);
+                let upload_url = format!("http://{}/api/files/client-upload/{}", server_host, upload_id);
                 Ok(CommandPayload::UploadFile { src_path: remote_path.clone(), upload_url })
             },
             ScriptStep::UploadDir { local_path, remote_path } => {
@@ -489,8 +504,7 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
                 
                 match zip_directory(&src_dir, &dst_zip) {
                     Ok(_) => {
-                        let host = format!("{}:{}", state.config.host, state.config.port);
-                        let download_url = format!("http://{}/api/files/download/staging/{}", host, zip_name);
+                        let download_url = format!("http://{}/api/files/download/staging/{}", server_host, zip_name);
                         Ok(CommandPayload::DownloadAndUnzip { url: download_url, dest_path: remote_path.clone() })
                     },
                     Err(e) => Err(format!("Failed to zip directory: {}", e))
@@ -498,9 +512,8 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
             },
             ScriptStep::DownloadDir { remote_path } => {
                 let upload_id = Uuid::new_v4();
-                let host = format!("{}:{}", state.config.host, state.config.port);
                 // Client will upload a zip file, server receives it as generic file upload
-                let upload_url = format!("http://{}/api/files/client-upload/{}", host, upload_id);
+                let upload_url = format!("http://{}/api/files/client-upload/{}", server_host, upload_id);
                 Ok(CommandPayload::ZipAndUpload { src_path: remote_path.clone(), upload_url })
             }
         };
@@ -966,6 +979,7 @@ pub struct TriggerUpdatePayload {
 
 pub async fn trigger_update_clients(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<TriggerUpdatePayload>,
 ) -> impl IntoResponse {
     let update_id_str = payload.update_id.to_string();
@@ -979,7 +993,10 @@ pub async fn trigger_update_clients(
             Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("DB Error: {}", e)).into_response(),
         };
 
-    let host = format!("{}:{}", state.config.host, state.config.port);
+    let host = headers.get("host")
+        .and_then(|h| h.to_str().ok())
+        .map(|h| h.to_string())
+        .unwrap_or_else(|| format!("{}:{}", state.config.host, state.config.port));
     // Note: We need to ensure we expose uploads/updates via ServeDir in main.rs
     let download_url = format!("http://{}/api/files/download/updates/{}", host, update.filename);
     

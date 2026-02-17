@@ -8,41 +8,107 @@
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
 </head>
 <body class="bg-gray-100 text-gray-800 font-sans">
-    <div id="app" class="min-h-screen p-6 flex flex-col">
-        <header class="mb-6 flex justify-between items-center bg-white p-4 rounded shadow-sm">
-            <div class="flex items-center gap-6">
-                <h1 class="text-2xl font-bold text-blue-600">{{ t('dashboardTitle') }} <span v-if="serverInfo" class="text-xs text-gray-400 font-normal">v{{ serverInfo.version }}</span></h1>
-                <nav class="flex gap-2">
-                    <button @click="currentView = 'dashboard'" :class="['px-3 py-1 rounded transition', currentView === 'dashboard' ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-600 hover:bg-gray-100']">{{ t('dashboard') }}</button>
-                    <button @click="currentView = 'groups'; fetchGroups()" :class="['px-3 py-1 rounded transition', currentView === 'groups' ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-600 hover:bg-gray-100']">{{ t('groups') }}</button>
-                    <button @click="currentView = 'scripts'; fetchScripts()" :class="['px-3 py-1 rounded transition', currentView === 'scripts' ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-600 hover:bg-gray-100']">{{ t('scripts') }}</button>
-                    <button @click="currentView = 'history'; fetchHistory()" :class="['px-3 py-1 rounded transition', currentView === 'history' ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-600 hover:bg-gray-100']">{{ t('history') }}</button>
-                    <button @click="currentView = 'updates'; fetchUpdates()" :class="['px-3 py-1 rounded transition', currentView === 'updates' ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-600 hover:bg-gray-100']">{{ t('updates') }}</button>
-                </nav>
+    <div id="app" class="min-h-screen p-2 md:p-6 flex flex-col">
+        <header class="mb-4 md:mb-6 bg-white shadow-sm sticky top-0 z-40">
+            <div class="px-4">
+                <div class="flex justify-between items-center h-16">
+                    <!-- Logo -->
+                    <div class="flex items-center gap-2">
+                         <h1 class="text-xl md:text-2xl font-bold text-blue-600 truncate">{{ t('dashboardTitle') }} <span v-if="serverInfo" class="text-xs text-gray-400 font-normal">v{{ serverInfo.version }}</span></h1>
+                    </div>
+        
+                    <!-- Desktop Nav -->
+                    <nav class="hidden md:flex space-x-1">
+                         <button @click="currentView = 'dashboard'" :class="['px-3 py-2 rounded-md text-sm font-medium transition', currentView === 'dashboard' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100']">{{ t('dashboard') }}</button>
+                         <button @click="currentView = 'groups'; fetchGroups()" :class="['px-3 py-2 rounded-md text-sm font-medium transition', currentView === 'groups' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100']">{{ t('groups') }}</button>
+                         <button @click="currentView = 'scripts'; fetchScripts()" :class="['px-3 py-2 rounded-md text-sm font-medium transition', currentView === 'scripts' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100']">{{ t('scripts') }}</button>
+                         <button @click="currentView = 'history'; fetchHistory()" :class="['px-3 py-2 rounded-md text-sm font-medium transition', currentView === 'history' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100']">{{ t('history') }}</button>
+                         <button @click="currentView = 'updates'; fetchUpdates()" :class="['px-3 py-2 rounded-md text-sm font-medium transition', currentView === 'updates' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100']">{{ t('updates') }}</button>
+                    </nav>
+        
+                    <!-- Desktop Right Side -->
+                    <div class="hidden md:flex items-center gap-4">
+                        <span class="text-sm text-gray-500 whitespace-nowrap">{{ t('connectedClients') }}: {{ clients.length }}</span>
+                        <button @click="toggleLang" class="bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded text-xs font-medium transition">
+                            {{ t('switchLang') }}
+                        </button>
+                    </div>
+        
+                    <!-- Mobile Menu Button -->
+                    <div class="md:hidden flex items-center">
+                        <button @click="toggleMenu" class="text-gray-600 hover:text-gray-900 focus:outline-none p-2">
+                            <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path v-if="!isMenuOpen" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                                <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
             </div>
-            <div class="flex items-center gap-4">
-                <span class="text-sm text-gray-500">{{ t('connectedClients') }}: {{ clients.length }}</span>
-                <button @click="toggleLang" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded text-xs font-medium">
-                    {{ t('switchLang') }}
-                </button>
+        
+            <!-- Mobile Menu -->
+            <div v-show="isMenuOpen" class="md:hidden border-t border-gray-100 bg-white absolute w-full shadow-lg">
+                <div class="px-2 pt-2 pb-3 space-y-1">
+                     <button @click="currentView = 'dashboard'; isMenuOpen = false" :class="['block w-full text-left px-3 py-2 rounded-md text-base font-medium', currentView === 'dashboard' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50']">{{ t('dashboard') }}</button>
+                     <button @click="currentView = 'groups'; fetchGroups(); isMenuOpen = false" :class="['block w-full text-left px-3 py-2 rounded-md text-base font-medium', currentView === 'groups' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50']">{{ t('groups') }}</button>
+                     <button @click="currentView = 'scripts'; fetchScripts(); isMenuOpen = false" :class="['block w-full text-left px-3 py-2 rounded-md text-base font-medium', currentView === 'scripts' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50']">{{ t('scripts') }}</button>
+                     <button @click="currentView = 'history'; fetchHistory(); isMenuOpen = false" :class="['block w-full text-left px-3 py-2 rounded-md text-base font-medium', currentView === 'history' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50']">{{ t('history') }}</button>
+                     <button @click="currentView = 'updates'; fetchUpdates(); isMenuOpen = false" :class="['block w-full text-left px-3 py-2 rounded-md text-base font-medium', currentView === 'updates' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50']">{{ t('updates') }}</button>
+                </div>
+                <div class="pt-4 pb-4 border-t border-gray-100 px-4">
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm text-gray-500">{{ t('connectedClients') }}: {{ clients.length }}</span>
+                        <button @click="toggleLang" class="bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded text-xs font-medium">
+                            {{ t('switchLang') }}
+                        </button>
+                    </div>
+                </div>
             </div>
         </header>
 
         <!-- Dashboard View -->
         <div v-if="currentView === 'dashboard'" class="bg-white rounded-lg shadow-md overflow-hidden flex-1 flex flex-col">
-            <div class="p-4 border-b bg-gray-50 flex gap-4 items-center">
-                <div class="relative flex-1 max-w-md">
+            <div class="p-4 border-b bg-gray-50 flex flex-col md:flex-row gap-4 items-center">
+                <div class="relative flex-1 w-full md:w-auto max-w-full md:max-w-md">
                     <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-500">🔍</span>
                     <input v-model="searchQuery" type="text" :placeholder="t('searchPlaceholder')" class="w-full border rounded pl-10 pr-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
                 </div>
-                <select v-model="statusFilter" class="border rounded px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none">
+                <select v-model="statusFilter" class="w-full md:w-auto border rounded px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none">
                     <option value="all">{{ t('allStatus') }}</option>
                     <option value="online">{{ t('online') }}</option>
                     <option value="offline">{{ t('offline') }}</option>
                 </select>
             </div>
             <div class="flex-1 overflow-auto">
-                <table class="w-full text-left border-collapse">
+                <div class="md:hidden">
+                    <!-- Mobile Card View -->
+                    <div v-for="client in filteredClients" :key="client.id" class="p-4 border-b last:border-b-0">
+                        <div class="flex justify-between items-start mb-2">
+                            <div>
+                                <div class="font-bold text-lg">{{ client.hostname }}</div>
+                                <div class="text-sm text-gray-500">{{ client.alias || '-' }}</div>
+                            </div>
+                            <span :class="{'px-2 py-1 rounded text-xs font-bold': true, 
+                                'bg-green-100 text-green-700': client.status === 'online',
+                                'bg-gray-100 text-gray-500': client.status === 'offline'
+                            }">{{ t(client.status) }}</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 text-sm text-gray-600 mb-3">
+                            <div>{{ client.ip }}</div>
+                            <div>{{ client.os }}</div>
+                            <div class="col-span-2 text-xs font-mono">{{ client.version }}</div>
+                        </div>
+                        <div class="flex gap-2">
+                            <button @click="openHardware(client)" :disabled="client.status === 'offline'" :class="['flex-1 py-2 rounded border text-center text-sm', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-green-600 hover:bg-green-100 border-green-200']">{{ t('hardware') }}</button>
+                            <button @click="openShell(client)" :disabled="client.status === 'offline'" :class="['flex-1 py-2 rounded border text-center text-sm', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-gray-700 hover:bg-gray-100 border-gray-300']">{{ t('shell') }}</button>
+                            <button @click="openFiles(client)" :disabled="client.status === 'offline'" :class="['flex-1 py-2 rounded border text-center text-sm', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-blue-600 hover:bg-blue-100 border-blue-200']">{{ t('files') }}</button>
+                        </div>
+                    </div>
+                    <div v-if="filteredClients.length === 0" class="p-8 text-center text-gray-400 italic">
+                        {{ t('noClients') }}
+                    </div>
+                </div>
+                <table class="hidden md:table w-full text-left border-collapse">
                     <thead class="sticky top-0 bg-gray-50 z-10 shadow-sm">
                         <tr class="text-gray-700 text-sm">
                             <th class="p-4 border-b w-1/6">{{ t('alias') }}</th>
@@ -230,7 +296,7 @@
         
         <!-- Hardware Info Modal -->
         <div v-if="activeModal === 'hardware'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+            <div class="bg-white rounded-lg shadow-lg w-full md:max-w-md m-4 md:m-0 p-6">
                 <h3 class="text-xl font-bold mb-4">{{ t('hardwareInfo') }}: {{ selectedClient?.hostname }}</h3>
                 <div v-if="commandLoading" class="text-center py-4">{{ t('loading') }}</div>
                 <div v-else-if="hardwareInfo" class="space-y-3">
@@ -260,7 +326,7 @@
 
         <!-- Shell Modal -->
         <div v-if="activeModal === 'shell'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-lg shadow-lg flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full md:w-1/2 h-[600px]'">
+            <div class="bg-white rounded-lg shadow-lg flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full md:w-3/4 lg:w-1/2 h-[80vh] md:h-[600px]'">
                 <div class="flex justify-between items-center p-4 border-b bg-gray-50 rounded-t-lg">
                     <h3 class="font-bold text-lg">{{ t('remoteShell') }}: {{ selectedClient?.hostname }}</h3>
                     <div class="flex items-center gap-2">
@@ -290,7 +356,7 @@
 
         <!-- Files Modal -->
         <div v-if="activeModal === 'files'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-lg shadow-lg flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full md:w-1/2 h-[600px]'">
+            <div class="bg-white rounded-lg shadow-lg flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full md:w-3/4 lg:w-1/2 h-[80vh] md:h-[600px]'">
                 <div class="flex justify-between items-center p-4 border-b bg-gray-50 rounded-t-lg">
                     <h3 class="font-bold text-lg">{{ t('fileBrowser') }}: {{ selectedClient?.hostname }}</h3>
                     <div class="flex items-center bg-white border rounded shadow-sm">
@@ -345,7 +411,7 @@
 
         <!-- Editor Modal -->
         <div v-if="activeModal === 'editor'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-lg shadow-lg flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full md:w-1/2 h-[600px]'">
+            <div class="bg-white rounded-lg shadow-lg flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full md:w-3/4 lg:w-1/2 h-[80vh] md:h-[600px]'">
                 <div class="flex justify-between items-center p-4 border-b bg-gray-50 rounded-t-lg">
                     <h3 class="font-bold text-lg">{{ t('viewingEditing') }}: {{ editorFile?.name }}</h3>
                     <div class="flex items-center bg-white border rounded shadow-sm">
@@ -371,7 +437,7 @@
 
         <!-- Group Editor Modal -->
         <div v-if="activeModal === 'groupEditor'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-lg shadow-xl w-full max-w-md">
+            <div class="bg-white rounded-lg shadow-xl w-full md:max-w-md m-4 md:m-0 flex flex-col max-h-[90vh]">
                 <div class="p-6 border-b">
                     <h3 class="text-xl font-bold">{{ isCreatingGroup ? t('createGroup') : t('editGroup') }}</h3>
                 </div>
@@ -419,7 +485,7 @@
 
         <!-- Script Editor Modal -->
         <div v-if="activeModal === 'scriptEditor'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-lg shadow-xl w-full max-w-3xl flex flex-col max-h-[90vh]">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-3xl m-4 md:m-0 flex flex-col max-h-[90vh]">
                 <div class="p-6 border-b">
                     <h3 class="text-xl font-bold">{{ isCreatingScript ? t('createScript') : t('editScript') }}</h3>
                 </div>
@@ -491,7 +557,7 @@
 
         <!-- Run Script Modal -->
         <div v-if="activeModal === 'runScript'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-lg shadow-xl w-full max-w-md">
+            <div class="bg-white rounded-lg shadow-xl w-full md:max-w-md m-4 md:m-0 flex flex-col max-h-[90vh]">
                 <div class="p-6 border-b">
                     <h3 class="text-xl font-bold">{{ t('runScript') }}: {{ selectedScript?.name }}</h3>
                 </div>
@@ -543,7 +609,7 @@
 
         <!-- Execution Monitor Modal -->
         <div v-if="activeModal === 'executionMonitor'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl flex flex-col max-h-[90vh] relative">
+            <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl m-4 md:m-0 flex flex-col max-h-[90vh] relative">
                 <div class="p-4 border-b flex justify-between items-center">
                     <h3 class="font-bold text-lg">{{ t('executionMonitor') }}</h3>
                     <button @click="closeModal" class="text-gray-500 hover:text-gray-700">✕</button>
@@ -610,7 +676,7 @@
 
         <!-- Upload Update Modal -->
         <div v-if="activeModal === 'uploadUpdate'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+            <div class="bg-white rounded-lg shadow-lg w-full md:max-w-md m-4 md:m-0 p-6">
                 <h3 class="text-xl font-bold mb-4">{{ t('uploadUpdatePackage') }}</h3>
                 
                 <div class="mb-4">
@@ -643,7 +709,7 @@
 
         <!-- Deploy Update Modal -->
         <div v-if="activeModal === 'deployUpdate'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-lg shadow-xl w-full max-w-md">
+            <div class="bg-white rounded-lg shadow-xl w-full md:max-w-md m-4 md:m-0 flex flex-col max-h-[90vh]">
                 <div class="p-6 border-b">
                     <h3 class="text-xl font-bold">{{ t('deployUpdate') }}: {{ selectedUpdate?.version }}</h3>
                 </div>
@@ -761,9 +827,14 @@
 
                 // Layout
                 const isMaximized = ref(false)
+                const isMenuOpen = ref(false)
                 
                 const toggleMaximize = () => {
                     isMaximized.value = !isMaximized.value
+                }
+
+                const toggleMenu = () => {
+                    isMenuOpen.value = !isMenuOpen.value
                 }
 
                 // I18n
@@ -1210,8 +1281,15 @@
                 const openFiles = (client) => {
                     selectedClient.value = client
                     activeModal.value = 'files'
-                    currentPath.value = '.'
-                    listFiles('.')
+                    
+                    // Determine initial path based on OS
+                    let initialPath = '~' // Default for Linux/macOS
+                    if (client.os && client.os.toLowerCase().includes('windows')) {
+                        initialPath = 'C:\\'
+                    }
+                    
+                    currentPath.value = initialPath
+                    listFiles(initialPath)
                     isMaximized.value = false
                 }
 
@@ -1810,7 +1888,7 @@
                     selectedClientIds, currentView, fetchScripts,
                     updateList, selectedUpdate, newUpdate, updateFileInput, fetchUpdates, openUploadUpdateModal, uploadUpdate, deleteUpdate, openDeployUpdate, triggerDeploy,
                     closeModal, formatBytes, navigateUp, joinPath,
-                    isMaximized, toggleMaximize,
+                    isMaximized, toggleMaximize, isMenuOpen, toggleMenu,
                     t, toggleLang, lang
                 }
             }

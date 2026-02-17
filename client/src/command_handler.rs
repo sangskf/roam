@@ -10,6 +10,28 @@ use std::io::{Seek, Write};
 
 use common::{CommandPayload, CommandResult, HardwareInfo, FileInfo};
 
+fn expand_path(path: &str) -> PathBuf {
+    if path == "~" {
+        let home = if cfg!(target_os = "windows") {
+            std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\".to_string())
+        } else {
+            std::env::var("HOME").unwrap_or_else(|_| "/".to_string())
+        };
+        return PathBuf::from(home);
+    }
+    
+    if path.starts_with("~/") || (cfg!(target_os = "windows") && path.starts_with("~\\")) {
+        let home = if cfg!(target_os = "windows") {
+            std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\".to_string())
+        } else {
+            std::env::var("HOME").unwrap_or_else(|_| "/".to_string())
+        };
+        return PathBuf::from(home).join(&path[2..]);
+    }
+    
+    PathBuf::from(path)
+}
+
 fn zip_directory(src_dir: &std::path::Path, dst_file: &std::path::Path) -> anyhow::Result<()> {
     if !src_dir.is_dir() {
         return Err(anyhow::anyhow!("Source is not a directory"));
@@ -93,7 +115,8 @@ pub async fn handle_command(cmd: CommandPayload) -> CommandResult {
                     std::env::var("HOME").unwrap_or("/".to_string())
                 };
                 
-                let target_path = args.get(0).cloned().unwrap_or(default_path);
+                let target_path_str = args.get(0).cloned().unwrap_or(default_path);
+                let target_path = expand_path(&target_path_str);
                 
                 match std::env::set_current_dir(&target_path) {
                     Ok(_) => CommandResult::ShellOutput {
@@ -103,7 +126,7 @@ pub async fn handle_command(cmd: CommandPayload) -> CommandResult {
                     },
                     Err(e) => CommandResult::ShellOutput {
                         stdout: String::new(),
-                        stderr: format!("cd: failed to change directory to {}: {}\n", target_path, e),
+                        stderr: format!("cd: failed to change directory to {}: {}\n", target_path.display(), e),
                         exit_code: 1,
                     },
                 }
@@ -177,9 +200,10 @@ pub async fn handle_command(cmd: CommandPayload) -> CommandResult {
             }
         }
         CommandPayload::ChangeDir { path } => {
-            info!("Changing directory to: {}", path);
-            match std::env::set_current_dir(&path) {
-                Ok(_) => CommandResult::DirChanged { new_path: path },
+            let expanded = expand_path(&path);
+            info!("Changing directory to: {} (expanded: {:?})", path, expanded);
+            match std::env::set_current_dir(&expanded) {
+                Ok(_) => CommandResult::DirChanged { new_path: expanded.to_string_lossy().to_string() },
                 Err(e) => {
                     error!("Failed to change dir: {}", e);
                     CommandResult::Error(format!("Failed to change dir: {}", e))
@@ -204,8 +228,9 @@ pub async fn handle_command(cmd: CommandPayload) -> CommandResult {
             })
         }
         CommandPayload::ListDir { path } => {
-             info!("Listing directory: {}", path);
-             match std::fs::read_dir(path) {
+             let expanded = expand_path(&path);
+             info!("Listing directory: {} (expanded: {:?})", path, expanded);
+             match std::fs::read_dir(&expanded) {
                  Ok(entries) => {
                      let mut files = Vec::new();
                      for entry in entries {
