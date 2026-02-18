@@ -15,7 +15,7 @@ impl ServerConfig {
     pub fn new() -> anyhow::Result<Self> {
         let builder = Config::builder()
             .set_default("host", "0.0.0.0")?
-            .set_default("port", 3000)?
+            .set_default("port", 3333)?
             .set_default("database_url", "sqlite:roam.db")?
             .set_default("auth_token", "secret-token")?
             .set_default("web_auth_enabled", true)?

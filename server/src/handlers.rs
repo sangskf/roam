@@ -748,7 +748,7 @@ pub async fn upload_file_admin(
         }
         
         // Construct download URL
-        let host = headers.get("host").and_then(|h| h.to_str().ok()).unwrap_or("localhost:3000");
+        let host = headers.get("host").and_then(|h| h.to_str().ok()).unwrap_or("localhost:3333");
         let url = format!("http://{}/api/files/download/staging/{}", host, file_name);
         
         return (StatusCode::OK, Json(serde_json::json!({ "url": url }))).into_response();

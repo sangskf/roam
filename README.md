@@ -65,7 +65,7 @@ cargo build --release
 **服务端配置 (`server/.env`)**:
 ```ini
 HOST=0.0.0.0
-PORT=3000
+PORT=3333
 AUTH_TOKEN=your_secure_token_here
 DATABASE_URL=sqlite:roam.db
 RUST_LOG=server=info,tower_http=info
@@ -73,7 +73,7 @@ RUST_LOG=server=info,tower_http=info
 
 **客户端配置 (`client/.env`)**:
 ```ini
-SERVER_URL=ws://localhost:3000/ws
+SERVER_URL=ws://localhost:3333/ws
 AUTH_TOKEN=your_secure_token_here
 HEARTBEAT_INTERVAL_SEC=5
 ALIAS=MyMacBook
@@ -86,7 +86,7 @@ RUST_LOG=client=info
 ```bash
 ./target/release/server
 ```
-服务启动后，访问浏览器: `http://localhost:3000`
+服务启动后，访问浏览器: `http://localhost:3333`
 
 **系统服务模式 (需管理员权限)**:
 ```bash

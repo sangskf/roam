@@ -26,3 +26,6 @@ service-manager = "0.10.0"
 encoding_rs = "0.8.35"
 zip = "0.6.6"
 walkdir = "2.5.0"
+
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.7"

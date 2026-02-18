@@ -12,7 +12,7 @@ pub struct ClientConfig {
 impl ClientConfig {
     pub fn new() -> anyhow::Result<Self> {
         let builder = Config::builder()
-            .set_default("server_url", "ws://127.0.0.1:3000/ws")?
+            .set_default("server_url", "ws://127.0.0.1:3333/ws")?
             .set_default("auth_token", "secret-token")?
             .set_default("heartbeat_interval_sec", 10)?
             .set_default("alias", None::<String>)?
