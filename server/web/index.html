@@ -6,6 +6,33 @@
     <title>Roam - Remote Maintenance</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- File Preview Libraries -->
+    <script src="https://unpkg.com/jszip/dist/jszip.min.js"></script>
+    <script src="https://unpkg.com/docx-preview/dist/docx-preview.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <style>
+        .docx-wrapper {
+            background: #fff;
+            padding: 20px;
+        }
+        .xlsx-preview table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        .xlsx-preview th, .xlsx-preview td {
+            border: 1px solid #e5e7eb;
+            padding: 8px;
+            text-align: left;
+        }
+        .xlsx-preview th {
+            background-color: #f9fafb;
+            font-weight: 600;
+        }
+        .xlsx-preview tr:hover {
+            background-color: #f3f4f6;
+        }
+    </style>
 </head>
 <body class="bg-gray-100 text-gray-800 font-sans">
     <div id="app" class="min-h-screen p-2 md:p-6 flex flex-col">
@@ -374,6 +401,88 @@
             </div>
         </div>
 
+        <!-- Preview Modal -->
+        <div v-if="activeModal === 'preview'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-lg flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full md:w-3/4 lg:w-1/2 h-[80vh] md:h-[600px]'">
+                <div class="flex justify-between items-center p-4 border-b bg-gray-50 rounded-t-lg">
+                    <h3 class="font-bold text-lg">{{ t('preview') }}: {{ previewFile?.name }}</h3>
+                    <div class="flex items-center bg-white border rounded shadow-sm">
+                         <button @click="toggleMaximize" class="px-3 py-1 hover:bg-gray-100 text-gray-600 border-r" :title="isMaximized ? t('restore') : t('maximize')">
+                            <span v-if="isMaximized">❐</span>
+                            <span v-else>☐</span>
+                        </button>
+                        <button @click="closePreview" class="px-3 py-1 hover:bg-red-500 hover:text-white text-gray-600" :title="t('close')">
+                            ✕
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="flex-1 overflow-auto bg-gray-100 flex flex-col p-4 relative">
+                     <div v-if="previewLoading" class="absolute inset-0 flex flex-col items-center justify-center bg-gray-100 z-10">
+                        <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mb-4"></div>
+                        <span class="text-gray-500">{{ t('loading') }}</span>
+                     </div>
+                     
+                     <div v-else-if="previewType === 'image'" class="flex items-center justify-center h-full">
+                        <img :src="previewUrl" class="max-w-full max-h-full object-contain shadow-lg">
+                     </div>
+                     <div v-else-if="previewType === 'video'" class="flex items-center justify-center h-full">
+                        <video :src="previewUrl" controls class="max-w-full max-h-full shadow-lg"></video>
+                     </div>
+                     <div v-else-if="previewType === 'audio'" class="flex items-center justify-center h-full">
+                        <audio :src="previewUrl" controls class="w-full max-w-md shadow-lg"></audio>
+                     </div>
+                     <div v-else-if="previewType === 'pdf'" class="h-full w-full">
+                        <iframe :src="previewUrl" class="w-full h-full shadow-lg border-0 bg-white"></iframe>
+                     </div>
+                     <div v-else-if="previewType === 'docx'" class="w-full min-h-full bg-white shadow-lg p-8 overflow-auto flex justify-center">
+                        <div ref="docxContainer" class="docx-wrapper w-full max-w-4xl"></div>
+                     </div>
+                     <div v-else-if="previewType === 'xlsx'" class="w-full h-full bg-white shadow-lg overflow-auto p-4 xlsx-preview">
+                        <div v-html="previewContent" class="prose max-w-none"></div>
+                    </div>
+                     <div v-else-if="previewType === 'zip'" class="w-full h-full bg-white shadow-lg flex flex-col overflow-hidden rounded">
+                        <div class="bg-gray-50 p-3 border-b font-bold flex justify-between shrink-0">
+                            <span>{{ t('archiveContents') }}</span>
+                            <span class="text-sm font-normal text-gray-500">{{ previewItems.length }} {{ t('items') }}</span>
+                        </div>
+                        <div class="flex-1 overflow-auto">
+                            <table class="w-full text-sm">
+                                <thead class="bg-gray-50 border-b sticky top-0">
+                                    <tr>
+                                        <th class="p-2 text-left">{{ t('name') }}</th>
+                                        <th class="p-2 text-right">{{ t('size') }}</th>
+                                        <th class="p-2 text-right">{{ t('date') }}</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="item in previewItems" :key="item.name" class="border-b hover:bg-gray-50">
+                                        <td class="p-2 flex items-center gap-2">
+                                            <span v-if="item.dir" class="text-yellow-500">📁</span>
+                                            <span v-else class="text-gray-400">📄</span>
+                                            {{ item.name }}
+                                        </td>
+                                        <td class="p-2 text-right font-mono">{{ item.dir ? '-' : formatBytes(item.size) }}</td>
+                                        <td class="p-2 text-right text-gray-500">{{ new Date(item.date).toLocaleString() }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                     </div>
+                     <div v-else class="flex items-center justify-center h-full text-red-500">
+                        {{ t('previewError') || 'Unsupported file type' }}
+                     </div>
+                </div>
+                
+                <div class="p-4 border-t flex justify-end gap-2 bg-gray-50">
+                    <button @click="downloadFromClient(previewFile)" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow-sm flex items-center gap-2">
+                        <span>⬇</span> {{ t('download') }}
+                    </button>
+                    <button @click="closePreview" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded">{{ t('close') }}</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Files Modal -->
         <div v-if="activeModal === 'files'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div class="bg-white rounded-lg shadow-lg flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full md:w-3/4 lg:w-1/2 h-[80vh] md:h-[600px]'">
@@ -420,7 +529,7 @@
                                 <td class="p-2 text-center text-xs text-gray-500">{{ file.is_dir ? 'DIR' : 'FILE' }}</td>
                                 <td class="p-2 text-right">
                                     <button v-if="!file.is_dir" @click.stop="downloadFromClient(file)" class="text-blue-500 hover:underline text-xs bg-white border px-2 py-0.5 rounded shadow-sm mr-2">{{ t('download') }}</button>
-                                    <button v-if="!file.is_dir" @click.stop="openEditor(file)" class="text-gray-700 hover:underline text-xs bg-white border px-2 py-0.5 rounded shadow-sm">{{ t('viewEdit') }}</button>
+                                    <button v-if="!file.is_dir" @click.stop="openFileHandler(file)" class="text-gray-700 hover:underline text-xs bg-white border px-2 py-0.5 rounded shadow-sm">{{ t('preview') }}</button>
                                 </td>
                             </tr>
                         </tbody>
@@ -1062,7 +1171,7 @@
                         type: 'Type',
                         action: 'Action',
                         download: 'Download',
-                        viewEdit: 'View/Edit',
+                        preview: 'Preview',
                         viewingEditing: 'Viewing/Editing',
                         closeCancel: 'Close/Cancel',
                         saveChanges: 'Save Changes',
@@ -1169,6 +1278,10 @@
                         newPassword: 'New Password',
                         passwordChanged: 'Password changed successfully',
                         passwordChangeFailed: 'Failed to change password',
+                        archiveContents: 'Archive Contents',
+                        items: 'items',
+                        date: 'Date',
+                        previewError: 'Preview failed or unsupported format',
                     },
                     zh: {
                         dashboardTitle: 'Roam 控制台',
@@ -1205,7 +1318,7 @@
                         type: '类型',
                         action: '操作',
                         download: '下载',
-                        viewEdit: '查看/编辑',
+                        preview: '预览',
                         viewingEditing: '正在查看/编辑',
                         closeCancel: '关闭/取消',
                         saveChanges: '保存更改',
@@ -1313,6 +1426,10 @@
                         newPassword: '新密码',
                         passwordChanged: '密码修改成功',
                         passwordChangeFailed: '密码修改失败',
+                        archiveContents: '压缩包内容',
+                        items: '项',
+                        date: '日期',
+                        previewError: '预览失败或不支持的格式',
                     }
                 }
 
@@ -1398,7 +1515,7 @@
                         const res = await apiFetch(`/api/clients/${clientId}/command`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ cmd: payload })
+                            body: JSON.stringify(payload)
                         })
                         if (!res.ok) throw new Error('Command failed to send')
                         const cmdId = await res.text()
@@ -1588,30 +1705,135 @@
                     }
                 }
 
+                const fetchClientFile = async (file) => {
+                    const uploadId = crypto.randomUUID();
+                    const host = window.location.host;
+                    const uploadUrl = `http://${host}/api/files/client-upload/${uploadId}`;
+                    
+                    const srcPath = joinPath(currentPath.value, file.name);
+                    
+                    const result = await sendCommand(selectedClient.value.id, {
+                        cmd_type: 'UploadFile',
+                        args: { src_path: srcPath, upload_url: uploadUrl }
+                    });
+                    
+                    if (result && result.status === 'Success') {
+                         return `/api/files/download/client_data/${uploadId}/${file.name}`;
+                    } else {
+                         throw new Error(result?.data || 'Unknown error');
+                    }
+                }
+
                 const downloadFromClient = async (file) => {
                     if (!confirm(`Download ${file.name}?`)) return
                     
                     try {
-                        const uploadId = crypto.randomUUID();
-                        const host = window.location.host;
-                        const uploadUrl = `http://${host}/api/files/client-upload/${uploadId}`;
-                        
-                        const srcPath = joinPath(currentPath.value, file.name);
-                        
-                        const result = await sendCommand(selectedClient.value.id, {
-                            cmd_type: 'UploadFile',
-                            args: { src_path: srcPath, upload_url: uploadUrl }
-                        });
-                        
-                        if (result && result.status === 'Success') {
-                             const serverDownloadUrl = `/api/files/download/client_data/${uploadId}/${file.name}`;
-                             window.open(serverDownloadUrl, '_blank');
-                        } else {
-                             alert('Download failed: ' + (result?.data || 'Unknown error'));
-                        }
-                        
+                        const serverDownloadUrl = await fetchClientFile(file);
+                        window.open(serverDownloadUrl, '_blank');
                     } catch (e) {
                         alert('Download failed: ' + e.message);
+                    }
+                }
+
+                // Preview
+                const previewFile = ref(null);
+                const previewUrl = ref('');
+                const previewType = ref('');
+                const previewContent = ref('');
+                const previewItems = ref([]);
+                const docxContainer = ref(null);
+                const previewLoading = ref(false);
+
+                const openPreview = async (file, type) => {
+                    previewFile.value = file;
+                    previewType.value = type;
+                    previewUrl.value = '';
+                    previewContent.value = '';
+                    previewItems.value = [];
+                    activeModal.value = 'preview';
+                    isMaximized.value = false;
+                    previewLoading.value = true;
+                    
+                    try {
+                        const url = await fetchClientFile(file);
+                        previewUrl.value = url;
+
+                        if (type === 'docx') {
+                            const res = await fetch(url);
+                            const blob = await res.blob();
+                            await nextTick();
+                            if (docxContainer.value) {
+                                try {
+                                    await docx.renderAsync(blob, docxContainer.value);
+                                } catch (e) {
+                                    console.error(e);
+                                    previewContent.value = '<div class="text-red-500 p-4">Failed to render DOCX: ' + e.message + '</div>';
+                                }
+                            }
+                        } else if (type === 'xlsx') {
+                            const res = await fetch(url);
+                            const ab = await res.arrayBuffer();
+                            const wb = XLSX.read(ab, {type: 'array'});
+                            const sheetName = wb.SheetNames[0];
+                            const sheet = wb.Sheets[sheetName];
+                            const html = XLSX.utils.sheet_to_html(sheet);
+                            previewContent.value = html;
+                        } else if (type === 'zip') {
+                            const res = await fetch(url);
+                            const blob = await res.blob();
+                            const zip = await JSZip.loadAsync(blob);
+                            const items = [];
+                            zip.forEach((relativePath, zipEntry) => {
+                                items.push({
+                                    name: zipEntry.name,
+                                    dir: zipEntry.dir,
+                                    date: zipEntry.date,
+                                    size: zipEntry._data ? zipEntry._data.uncompressedSize : 0
+                                });
+                            });
+                            previewItems.value = items.sort((a, b) => (a.dir === b.dir ? 0 : a.dir ? -1 : 1));
+                        }
+                    } catch (e) {
+                        alert('Preview failed: ' + e.message);
+                        closePreview();
+                    } finally {
+                        previewLoading.value = false;
+                    }
+                }
+
+                const closePreview = () => {
+                    activeModal.value = 'files';
+                    previewFile.value = null;
+                    previewUrl.value = '';
+                    previewType.value = '';
+                    previewContent.value = '';
+                    previewItems.value = [];
+                    if (docxContainer.value) docxContainer.value.innerHTML = '';
+                }
+
+                const openFileHandler = (file) => {
+                    const ext = file.name.split('.').pop().toLowerCase();
+                    const images = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'];
+                    const videos = ['mp4', 'webm', 'ogg', 'mov'];
+                    const audios = ['mp3', 'wav', 'ogg'];
+                    const office = ['xlsx', 'xls', 'csv'];
+                    
+                    if (images.includes(ext)) {
+                        openPreview(file, 'image');
+                    } else if (videos.includes(ext)) {
+                        openPreview(file, 'video');
+                    } else if (audios.includes(ext)) {
+                        openPreview(file, 'audio');
+                    } else if (ext === 'pdf') {
+                         openPreview(file, 'pdf');
+                    } else if (ext === 'docx') {
+                         openPreview(file, 'docx');
+                    } else if (office.includes(ext)) {
+                         openPreview(file, 'xlsx');
+                    } else if (ext === 'zip') {
+                         openPreview(file, 'zip');
+                    } else {
+                        openEditor(file);
                     }
                 }
 
@@ -2314,6 +2536,7 @@
                     openFiles, listFiles, 
                     triggerFileUpload, handleFileUpload, downloadFromClient,
                     openEditor, closeEditor, saveFile, editorFile, editorContent,
+                    previewFile, previewUrl, previewType, previewContent, previewItems, docxContainer, previewLoading, openPreview, closePreview, openFileHandler,
                     openScripts, scriptList, selectedScript, isCreatingScript, newScript, scriptStatus,
                     openScriptEditor, saveScript, addStep, removeStep, deleteScript, openRunScript, executeScript,
                     fetchGroups, groupList, selectedGroup, isCreatingGroup, newGroup, openGroupEditor, saveGroup, deleteGroup, runGroupScripts,

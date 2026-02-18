@@ -17,6 +17,7 @@ use hex;
 use crate::state::{AppState, ClientConnection, ScriptGroup, ScriptStep, ExecutionProgress};
 use common::{Message, CommandPayload, CommandResult};
 
+#[allow(dead_code)]
 pub async fn index() -> &'static str {
     "Roam Server Running"
 }
@@ -758,7 +759,6 @@ pub async fn upload_file_admin(
 // API: Client uploads file (Result of UploadFile command)
 pub async fn upload_file_client(
     Path(id): Path<Uuid>, // Command ID
-    State(state): State<Arc<AppState>>,
     mut multipart: Multipart
 ) -> impl IntoResponse {
     while let Some(field) = multipart.next_field().await.unwrap_or(None) {
@@ -854,21 +854,16 @@ pub async fn list_clients(State(state): State<Arc<AppState>>) -> Json<Vec<Client
 }
 
 // API: Send command to client
-#[derive(serde::Deserialize)]
-pub struct CommandRequest {
-    pub cmd: CommandPayload,
-}
-
 pub async fn send_command(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
-    Json(payload): Json<CommandRequest>,
+    Json(cmd): Json<CommandPayload>,
 ) -> impl IntoResponse {
     if let Some(client) = state.clients.get(&id) {
         let cmd_id = Uuid::new_v4();
         let msg = Message::Command {
             id: cmd_id,
-            cmd: payload.cmd,
+            cmd,
         };
         match client.tx.send(msg).await {
             Ok(_) => (StatusCode::OK, format!("{}", cmd_id)).into_response(), // Return just the ID

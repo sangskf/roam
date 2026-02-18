@@ -3,7 +3,7 @@
 Roam 是一个基于 Rust 开发的现代化远程维护与自动化编排工具，采用 Client-Server 架构。它提供了强大的 Web 控制台，支持多客户端管理、远程 Shell、文件管理、脚本编排以及系统服务集成。
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)
+![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)
 ![Vue](https://img.shields.io/badge/vue-3.0-green.svg)
 
 ## ✨ 核心功能 (Features)

@@ -11,7 +11,7 @@ use axum::{
     extract::{DefaultBodyLimit, State, Request},
     middleware::{self, Next},
     response::{Response, IntoResponse},
-    http::{StatusCode, HeaderMap},
+    http::StatusCode,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -22,7 +22,7 @@ use clap::{Parser, Subcommand};
 
 use crate::state::AppState;
 use crate::config::ServerConfig;
-use uuid::Uuid;
+// use uuid::Uuid;
 
 #[derive(Parser)]
 #[command(name = "roam-server")]
