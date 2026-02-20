@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT script_id FROM group_scripts WHERE group_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "script_id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "32a0354540c64ae21637376bf7acbe3864a28270f6fab65bcccab8ab8852a55c"
+}

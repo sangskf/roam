@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO client_updates (id, version, filename, platform) VALUES (?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "719ffdaa5e6f2a2a0c8771b4e8c63a5aff92f61ce16a174adfdc2a86c2f4eb0d"
+}

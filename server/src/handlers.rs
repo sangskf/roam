@@ -853,6 +853,31 @@ pub async fn list_clients(State(state): State<Arc<AppState>>) -> Json<Vec<Client
     Json(clients)
 }
 
+// API: Delete Client (Remove from DB and disconnect)
+pub async fn delete_client(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    let id_str = id.to_string();
+    
+    // 1. Remove from active connections (this will effectively disconnect the client)
+    if state.clients.remove(&id).is_some() {
+        info!("Client {} disconnected due to deletion", id);
+    }
+    
+    // 2. Remove from DB (client_group_members first)
+    if let Err(e) = sqlx::query!("DELETE FROM client_group_members WHERE client_id = ?", id_str).execute(&state.db).await {
+         error!("Failed to remove client from groups: {}", e);
+    }
+    
+    // 3. Remove from clients table
+    if let Err(e) = sqlx::query!("DELETE FROM clients WHERE id = ?", id_str).execute(&state.db).await {
+         return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to delete client from DB: {}", e)).into_response();
+    }
+    
+    (StatusCode::OK, "Client deleted").into_response()
+}
+
 // API: Send command to client
 pub async fn send_command(
     State(state): State<Arc<AppState>>,

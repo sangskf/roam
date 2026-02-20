@@ -149,6 +149,7 @@
                             <button @click="openHardware(client)" :disabled="client.status === 'offline'" :class="['flex-1 py-2 rounded border text-center text-sm', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-green-600 hover:bg-green-100 border-green-200']">{{ t('hardware') }}</button>
                             <button @click="openShell(client)" :disabled="client.status === 'offline'" :class="['flex-1 py-2 rounded border text-center text-sm', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-gray-700 hover:bg-gray-100 border-gray-300']">{{ t('shell') }}</button>
                             <button @click="openFiles(client)" :disabled="client.status === 'offline'" :class="['flex-1 py-2 rounded border text-center text-sm', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-blue-600 hover:bg-blue-100 border-blue-200']">{{ t('files') }}</button>
+                            <button @click="deleteClient(client)" class="flex-1 py-2 rounded border text-center text-sm text-red-600 hover:bg-red-100 border-red-200">{{ t('delete') }}</button>
                         </div>
                     </div>
                     <div v-if="filteredClients.length === 0" class="p-8 text-center text-gray-400 italic">
@@ -158,32 +159,33 @@
                 <table class="hidden md:table w-full text-left border-collapse">
                     <thead class="sticky top-0 bg-gray-50 z-10 shadow-sm">
                         <tr class="text-gray-700 text-sm">
-                            <th class="p-4 border-b w-1/6">{{ t('alias') }}</th>
                             <th class="p-4 border-b w-1/6">{{ t('hostname') }}</th>
-                            <th class="p-4 border-b w-1/6">{{ t('status') }}</th>
+                            <th class="p-4 border-b w-1/6">{{ t('alias') }}</th>
                             <th class="p-4 border-b w-1/6">{{ t('ipAddress') }}</th>
                             <th class="p-4 border-b w-1/6">{{ t('os') }}</th>
                             <th class="p-4 border-b w-1/6">{{ t('version') }}</th>
+                            <th class="p-4 border-b w-1/6">{{ t('status') }}</th>
                             <th class="p-4 border-b">{{ t('actions') }}</th>
                         </tr>
                     </thead>
                     <tbody class="text-sm">
                         <tr v-for="client in filteredClients" :key="client.id" class="hover:bg-blue-50 border-b last:border-b-0 transition-colors">
-                        <td class="p-4 font-medium">{{ client.alias || '-' }}</td>
                         <td class="p-4">{{ client.hostname }}</td>
+                        <td class="p-4 font-medium">{{ client.alias || '-' }}</td>
+                        <td class="p-4 font-mono text-gray-500">{{ client.ip }}</td>
+                        <td class="p-4">{{ client.os }}</td>
+                        <td class="p-4 font-mono text-gray-500">{{ client.version }}</td>
                         <td class="p-4">
                             <span :class="{'px-2 py-1 rounded text-xs font-bold': true, 
                                 'bg-green-100 text-green-700': client.status === 'online',
                                 'bg-gray-100 text-gray-500': client.status === 'offline'
                             }">{{ t(client.status) }}</span>
                         </td>
-                        <td class="p-4 font-mono text-gray-500">{{ client.ip }}</td>
-                        <td class="p-4">{{ client.os }}</td>
-                        <td class="p-4 font-mono text-gray-500">{{ client.version }}</td>
                         <td class="p-4 flex gap-2">
                             <button @click="openHardware(client)" :disabled="client.status === 'offline'" :class="['px-2 py-1 rounded border whitespace-nowrap', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-green-600 hover:bg-green-100 border-green-200']">{{ t('hardware') }}</button>
                             <button @click="openShell(client)" :disabled="client.status === 'offline'" :class="['px-2 py-1 rounded border whitespace-nowrap', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-gray-700 hover:bg-gray-100 border-gray-300']">{{ t('shell') }}</button>
                             <button @click="openFiles(client)" :disabled="client.status === 'offline'" :class="['px-2 py-1 rounded border whitespace-nowrap', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-blue-600 hover:bg-blue-100 border-blue-200']">{{ t('files') }}</button>
+                            <button @click="deleteClient(client)" class="px-2 py-1 rounded border whitespace-nowrap text-red-600 hover:bg-red-100 border-red-200">{{ t('delete') }}</button>
                         </td>
                     </tr>
                     <tr v-if="filteredClients.length === 0">
@@ -1282,6 +1284,7 @@
                         items: 'items',
                         date: 'Date',
                         previewError: 'Preview failed or unsupported format',
+                        confirmDeleteClient: 'Are you sure you want to remove this client?',
                     },
                     zh: {
                         dashboardTitle: 'Roam 控制台',
@@ -1347,6 +1350,8 @@
                         running: '运行中...',
                         scriptStarted: '脚本执行已开始',
                         dashboard: '仪表盘',
+                        confirmDeleteClient: '确定要移除此客户端吗？',
+                        delete: '删除',
                         history: '历史记录',
                         executionHistory: '执行历史',
                         time: '时间',
@@ -1732,6 +1737,21 @@
                         window.open(serverDownloadUrl, '_blank');
                     } catch (e) {
                         alert('Download failed: ' + e.message);
+                    }
+                }
+
+                const deleteClient = async (client) => {
+                    if (!confirm(t('confirmDeleteClient'))) return;
+                    try {
+                        const res = await apiFetch(`/api/clients/${client.id}`, { method: 'DELETE' });
+                        if (res.ok) {
+                            await fetchClients();
+                        } else {
+                            const err = await res.text();
+                            alert('Failed to delete client: ' + err);
+                        }
+                    } catch (e) {
+                        alert(e.message);
                     }
                 }
 
@@ -2538,7 +2558,7 @@
                     currentPath, fileList, fileInput,
                     openHardware, openShell, runShellCommand, triggerShellUpload, handleShellUpload,
                     openFiles, listFiles, 
-                    triggerFileUpload, handleFileUpload, downloadFromClient,
+                    triggerFileUpload, handleFileUpload, downloadFromClient, deleteClient,
                     openEditor, closeEditor, saveFile, editorFile, editorContent,
                     previewFile, previewUrl, previewType, previewContent, previewItems, docxContainer, previewLoading, openPreview, closePreview, openFileHandler,
                     openScripts, scriptList, selectedScript, isCreatingScript, newScript, scriptStatus,

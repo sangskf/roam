@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE execution_history SET status = ?, completed_at = CURRENT_TIMESTAMP, logs = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "e4006a6ef5a4d4b3c8264d6c87a3e57506dc563f63b9d53ffa5c4b6ed70719d2"
+}
