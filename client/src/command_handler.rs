@@ -378,8 +378,18 @@ pub async fn handle_command(cmd: CommandPayload) -> CommandResult {
         }
         CommandPayload::ReadFile { path } => {
             info!("Reading file: {}", path);
-            match tokio::fs::read_to_string(&path).await {
-                Ok(content) => CommandResult::FileContent { content },
+            match tokio::fs::read(&path).await {
+                Ok(bytes) => {
+                    // Try UTF-8 first
+                    let (cow, _, had_errors) = encoding_rs::UTF_8.decode(&bytes);
+                    if had_errors {
+                        // If UTF-8 fails, try GBK (common for Windows/Chinese)
+                        let (gbk_cow, _, _) = encoding_rs::GBK.decode(&bytes);
+                        CommandResult::FileContent { content: gbk_cow.into_owned() }
+                    } else {
+                        CommandResult::FileContent { content: cow.into_owned() }
+                    }
+                },
                 Err(e) => {
                     error!("Failed to read file: {}", e);
                     CommandResult::Error(format!("Failed to read file: {}", e))

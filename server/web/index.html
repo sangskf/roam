@@ -7,7 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <!-- File Preview Libraries -->
-    <script src="https://unpkg.com/jszip/dist/jszip.min.js"></script>
+    <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://unpkg.com/docx-preview/dist/docx-preview.js"></script>
     <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
     <style>
@@ -1718,7 +1718,7 @@
                     });
                     
                     if (result && result.status === 'Success') {
-                         return `/api/files/download/client_data/${uploadId}/${file.name}`;
+                         return `/api/files/download/client_data/${uploadId}/${encodeURIComponent(file.name)}`;
                     } else {
                          throw new Error(result?.data || 'Unknown error');
                     }
@@ -1780,15 +1780,19 @@
                             previewContent.value = html;
                         } else if (type === 'zip') {
                             const res = await fetch(url);
+                            if (!res.ok) throw new Error(`Failed to fetch zip file: ${res.status} ${res.statusText}`);
                             const blob = await res.blob();
+                            
+                            if (!window.JSZip) throw new Error("JSZip library not loaded");
                             const zip = await JSZip.loadAsync(blob);
+                            
                             const items = [];
                             zip.forEach((relativePath, zipEntry) => {
                                 items.push({
                                     name: zipEntry.name,
                                     dir: zipEntry.dir,
                                     date: zipEntry.date,
-                                    size: zipEntry._data ? zipEntry._data.uncompressedSize : 0
+                                    size: (zipEntry._data && zipEntry._data.uncompressedSize) || 0
                                 });
                             });
                             previewItems.value = items.sort((a, b) => (a.dir === b.dir ? 0 : a.dir ? -1 : 1));
