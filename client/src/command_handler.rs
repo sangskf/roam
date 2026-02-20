@@ -544,5 +544,30 @@ async fn download_and_replace(url: &str) -> anyhow::Result<()> {
     // Cleanup temp file
     let _ = fs::remove_file(&temp_file);
     
-    Ok(())
+    // Restart process
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let args: Vec<String> = std::env::args().collect();
+        let mut command = std::process::Command::new(&args[0]);
+        command.args(&args[1..]);
+        let err = command.exec();
+        // If we're here, exec failed
+        anyhow::bail!("Failed to restart process: {}", err);
+    }
+
+    #[cfg(windows)]
+    {
+        // On Windows, self-replace works but we need to spawn new process and exit current one
+        let args: Vec<String> = std::env::args().collect();
+        std::process::Command::new(&args[0])
+            .args(&args[1..])
+            .spawn()?;
+        std::process::exit(0);
+    }
+    
+    #[cfg(not(any(unix, windows)))]
+    {
+        anyhow::bail!("Automatic restart not supported on this platform");
+    }
 }
