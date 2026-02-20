@@ -559,10 +559,18 @@ async fn download_and_replace(url: &str) -> anyhow::Result<()> {
     #[cfg(windows)]
     {
         // On Windows, self-replace works but we need to spawn new process and exit current one
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+
         let args: Vec<String> = std::env::args().collect();
-        std::process::Command::new(&args[0])
+        let exe_path = std::env::current_exe()?;
+        
+        std::process::Command::new(exe_path)
             .args(&args[1..])
+            .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
             .spawn()?;
+            
         std::process::exit(0);
     }
     
