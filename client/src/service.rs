@@ -84,6 +84,9 @@ pub fn run_windows_service() -> anyhow::Result<()> {
 
 #[cfg(windows)]
 fn run_service_logic() -> anyhow::Result<()> {
+    // Mark as running as service so update handler knows how to restart
+    std::env::set_var("ROAM_IS_SERVICE", "1");
+
     use windows_service::{
         service::{
             ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,

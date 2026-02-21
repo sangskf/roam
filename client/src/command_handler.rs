@@ -558,7 +558,15 @@ async fn download_and_replace(url: &str) -> anyhow::Result<()> {
 
     #[cfg(windows)]
     {
-        // On Windows, self-replace works but we need to spawn new process and exit current one
+        // Check if running as service (set in service.rs)
+        if std::env::var("ROAM_IS_SERVICE").unwrap_or_default() == "1" {
+            // If service, just exit with error code to trigger SCM restart
+            // RestartPolicy::Always or OnFailure should handle this.
+            // We use exit code 1 to signal "failure" just in case.
+            std::process::exit(1);
+        }
+
+        // On Windows (non-service), self-replace works but we need to spawn new process and exit current one
         use std::os::windows::process::CommandExt;
         const DETACHED_PROCESS: u32 = 0x00000008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
