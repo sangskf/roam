@@ -26,6 +26,22 @@ pub fn install_service() -> anyhow::Result<()> {
         autostart: true,
         restart_policy: service_manager::RestartPolicy::Always { delay_secs: Some(10) },
     })?;
+
+    #[cfg(windows)]
+    {
+        // Explicitly set recovery options using sc.exe because service-manager might not set them fully
+        // reset= 86400 (reset fail count after 1 day)
+        // actions= restart/10000/restart/10000/restart/10000 (restart after 10s for 1st, 2nd, and subsequent failures)
+        let status = std::process::Command::new("sc")
+            .args(&["failure", "roam-client", "reset=", "86400", "actions=", "restart/10000/restart/10000/restart/10000"])
+            .status();
+            
+        match status {
+            Ok(s) if s.success() => println!("Windows service recovery options configured."),
+            Ok(s) => eprintln!("Failed to configure recovery options: exit code {}", s),
+            Err(e) => eprintln!("Failed to execute sc command: {}", e),
+        }
+    }
     
     println!("Service 'roam-client' installed successfully.");
     println!("You can now start it with: roam-client start (or systemctl start roam-client / net start roam-client)");

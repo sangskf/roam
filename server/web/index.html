@@ -143,7 +143,8 @@
                         <div class="grid grid-cols-2 gap-2 text-sm text-gray-600 mb-3">
                             <div>{{ client.ip }}</div>
                             <div>{{ client.os }}</div>
-                            <div class="col-span-2 text-xs font-mono">{{ client.version }}</div>
+                            <div class="text-xs font-mono">{{ client.version }}</div>
+                            <div class="text-xs text-gray-500 text-right">{{ formatDate(client.last_seen) }}</div>
                         </div>
                         <div class="flex gap-2">
                             <button @click="openHardware(client)" :disabled="client.status === 'offline'" :class="['flex-1 py-2 rounded border text-center text-sm', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-green-600 hover:bg-green-100 border-green-200']">{{ t('hardware') }}</button>
@@ -159,12 +160,13 @@
                 <table class="hidden md:table w-full text-left border-collapse">
                     <thead class="sticky top-0 bg-gray-50 z-10 shadow-sm">
                         <tr class="text-gray-700 text-sm">
-                            <th class="p-4 border-b w-1/6">{{ t('hostname') }}</th>
-                            <th class="p-4 border-b w-1/6">{{ t('alias') }}</th>
-                            <th class="p-4 border-b w-1/6">{{ t('ipAddress') }}</th>
-                            <th class="p-4 border-b w-1/6">{{ t('os') }}</th>
-                            <th class="p-4 border-b w-1/6">{{ t('version') }}</th>
-                            <th class="p-4 border-b w-1/6">{{ t('status') }}</th>
+                            <th class="p-4 border-b">{{ t('hostname') }}</th>
+                            <th class="p-4 border-b">{{ t('alias') }}</th>
+                            <th class="p-4 border-b">{{ t('ipAddress') }}</th>
+                            <th class="p-4 border-b">{{ t('os') }}</th>
+                            <th class="p-4 border-b">{{ t('version') }}</th>
+                            <th class="p-4 border-b">{{ t('status') }}</th>
+                            <th class="p-4 border-b">{{ t('lastSeen') }}</th>
                             <th class="p-4 border-b">{{ t('actions') }}</th>
                         </tr>
                     </thead>
@@ -181,6 +183,7 @@
                                 'bg-gray-100 text-gray-500': client.status === 'offline'
                             }">{{ t(client.status) }}</span>
                         </td>
+                        <td class="p-4 text-xs text-gray-500">{{ formatDate(client.last_seen) }}</td>
                         <td class="p-4 flex gap-2">
                             <button @click="openHardware(client)" :disabled="client.status === 'offline'" :class="['px-2 py-1 rounded border whitespace-nowrap', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-green-600 hover:bg-green-100 border-green-200']">{{ t('hardware') }}</button>
                             <button @click="openShell(client)" :disabled="client.status === 'offline'" :class="['px-2 py-1 rounded border whitespace-nowrap', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-gray-700 hover:bg-gray-100 border-gray-300']">{{ t('shell') }}</button>
@@ -189,7 +192,7 @@
                         </td>
                     </tr>
                     <tr v-if="filteredClients.length === 0">
-                        <td colspan="6" class="p-12 text-center text-gray-400 italic">{{ t('noClients') }}</td>
+                        <td colspan="8" class="p-12 text-center text-gray-400 italic">{{ t('noClients') }}</td>
                     </tr>
                 </tbody>
             </table>
@@ -872,7 +875,7 @@
                                     {{ client.hostname }}
                                     <span v-if="client.alias" class="text-gray-500 font-normal ml-1">({{ client.alias }})</span>
                                 </div>
-                                <div class="text-xs text-gray-500">{{ client.ip }} - {{ client.os }}</div>
+                                <div class="text-xs text-gray-500">{{ client.ip }} - {{ client.os }} - v{{ client.version }}</div>
                             </div>
                         </label>
                         <div v-if="clients.length === 0" class="text-center text-gray-400 py-4">{{ t('noClients') }}</div>
@@ -1069,6 +1072,15 @@
                         return matchQuery && matchStatus
                     })
                 })
+
+                const formatDate = (dateStr) => {
+                    if (!dateStr) return '-';
+                    try {
+                        return new Date(dateStr).toLocaleString();
+                    } catch (e) {
+                        return dateStr;
+                    }
+                }
                 
                 // Hardware Info
                 const hardwareInfo = ref(null)
@@ -1147,6 +1159,7 @@
                         os: 'OS',
                         version: 'Version',
                         id: 'ID',
+                        lastSeen: 'Last Seen',
                         actions: 'Actions',
                         noClients: 'No clients connected.',
                         hardware: 'Hardware',
@@ -1295,6 +1308,7 @@
                         os: '操作系统',
                         version: '版本',
                         id: 'ID',
+                        lastSeen: '最后心跳',
                         actions: '操作',
                         noClients: '暂无客户端连接',
                         hardware: '硬件信息',
@@ -2570,7 +2584,7 @@
                     updateList, selectedUpdate, newUpdate, updateFileInput, fetchUpdates, openUploadUpdateModal, uploadUpdate, deleteUpdate, openDeployUpdate, triggerDeploy,
                     closeModal, formatBytes, navigateUp, joinPath,
                     isMaximized, toggleMaximize, isMenuOpen, toggleMenu,
-                    t, toggleLang, lang,
+                    t, toggleLang, lang, formatDate,
                     currentLogItem, downloadLogFile, downloadArtifact,
                     // Auth exports
                     authEnabled, isLoggedIn, username, loginForm, passwordForm, showPasswordModal,

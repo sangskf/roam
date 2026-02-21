@@ -810,10 +810,11 @@ pub struct ClientSummary {
     pub ip: String,
     pub version: String,
     pub status: String,
+    pub last_seen: Option<String>,
 }
 
 pub async fn list_clients(State(state): State<Arc<AppState>>) -> Json<Vec<ClientSummary>> {
-    let rows = sqlx::query("SELECT id, hostname, os, alias, ip, version, status FROM clients ORDER BY last_seen DESC")
+    let rows = sqlx::query("SELECT id, hostname, os, alias, ip, version, status, last_seen FROM clients ORDER BY last_seen DESC")
         .fetch_all(&state.db)
         .await
         .unwrap_or_default();
@@ -823,21 +824,45 @@ pub async fn list_clients(State(state): State<Arc<AppState>>) -> Json<Vec<Client
         let id = Uuid::parse_str(&id_str).unwrap_or_default();
         let is_connected = state.clients.contains_key(&id);
         
-        let hostname: String = r.get("hostname");
-        let os: String = r.get("os");
-        let alias: Option<String> = r.get("alias");
+        let db_hostname: String = r.get("hostname");
+        let db_os: String = r.get("os");
+        let db_alias: Option<String> = r.get("alias");
         let db_ip: Option<String> = r.get("ip");
         let db_version: Option<String> = r.get("version");
         let _db_status: String = r.get("status");
+        let db_last_seen: Option<chrono::NaiveDateTime> = r.get("last_seen");
+        
+        let last_seen = db_last_seen.map(|d| format!("{}Z", d.format("%Y-%m-%dT%H:%M:%S")));
 
-        let (ip, version, status) = if is_connected {
+        let (hostname, os, alias, ip, version, status) = if is_connected {
             if let Some(conn) = state.clients.get(&id) {
-                (conn.ip.clone(), conn.version.clone(), "online".to_string())
+                (
+                    conn.hostname.clone(),
+                    conn.os.clone(),
+                    conn.alias.clone(),
+                    conn.ip.clone(),
+                    conn.version.clone(),
+                    "online".to_string()
+                )
             } else {
-                (db_ip.unwrap_or_default(), db_version.unwrap_or_default(), "online".to_string())
+                (
+                    db_hostname,
+                    db_os,
+                    db_alias,
+                    db_ip.unwrap_or_default(),
+                    db_version.unwrap_or_default(),
+                    "online".to_string()
+                )
             }
         } else {
-            (db_ip.unwrap_or_default(), db_version.unwrap_or_default(), "offline".to_string())
+            (
+                db_hostname,
+                db_os,
+                db_alias,
+                db_ip.unwrap_or_default(),
+                db_version.unwrap_or_default(),
+                "offline".to_string()
+            )
         };
 
         ClientSummary {
@@ -848,6 +873,7 @@ pub async fn list_clients(State(state): State<Arc<AppState>>) -> Json<Vec<Client
             ip,
             version,
             status,
+            last_seen,
         }
     }).collect();
     Json(clients)
@@ -1179,8 +1205,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, addr: SocketAddr
                     Ok(parsed_msg) => {
                         match parsed_msg {
                             Message::Heartbeat => {
-                                // Update last seen in DB (TODO)
-                                // info!("Heartbeat from {}", client_id);
+                                // Update last seen in DB
+                                let client_id_str = client_id.to_string();
+                                let _ = sqlx::query("UPDATE clients SET last_seen = CURRENT_TIMESTAMP WHERE id = ?")
+                                    .bind(&client_id_str)
+                                    .execute(&state.db).await;
                             }
                             Message::Response { id, result } => {
                                 info!("Received response for command {}: {:?}", id, result);
