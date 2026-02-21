@@ -189,7 +189,6 @@ sudo ./target/release/client start
 ![Dashboard](docs/images/dashboard.png)
 
 **远程终端 (Remote Shell)**
-![Remote Shell](docs/images/shell.png)
 ![Remote Shell](docs/images/log.png)
 
 **脚本编排 (Script Orchestration)**
