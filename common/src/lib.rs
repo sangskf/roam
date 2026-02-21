@@ -12,6 +12,7 @@ pub enum Message {
         os: String,
         alias: Option<String>,
         version: String,
+        ips: Vec<String>,
     },
     AuthSuccess,
     AuthFailed(String),

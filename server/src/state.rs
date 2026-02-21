@@ -33,6 +33,7 @@ pub struct ClientConnection {
     pub os: String,
     pub alias: Option<String>,
     pub ip: String,
+    pub ips: Vec<String>,
     pub version: String,
 }
 

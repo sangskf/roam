@@ -80,6 +80,15 @@ async fn connect_and_run(client_id: Uuid, hostname: &str, os: &str, version: &st
     let (mut write, mut read) = ws_stream.split();
 
     // 1. Register
+    let mut ips = Vec::new();
+    if let Ok(ifaces) = if_addrs::get_if_addrs() {
+        for iface in ifaces {
+            if !iface.is_loopback() {
+                ips.push(iface.addr.ip().to_string());
+            }
+        }
+    }
+
     let register_msg = Message::Register {
         client_id,
         token: config.auth_token.clone(),
@@ -87,6 +96,7 @@ async fn connect_and_run(client_id: Uuid, hostname: &str, os: &str, version: &st
         os: os.to_string(),
         alias: config.alias.clone(),
         version: version.to_string(),
+        ips,
     };
     write.send(WsMessage::Text(serde_json::to_string(&register_msg)?)).await?;
 

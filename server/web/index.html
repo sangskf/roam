@@ -141,7 +141,10 @@
                             }">{{ t(client.status) }}</span>
                         </div>
                         <div class="grid grid-cols-2 gap-2 text-sm text-gray-600 mb-3">
-                            <div>{{ client.ip }}</div>
+                        <div @click="openIpModal(client)" class="cursor-pointer text-blue-600 hover:underline">
+                            {{ client.ip }} 
+                            <span v-if="client.ips && client.ips.length > 1" class="text-xs text-gray-500">({{ client.ips.length }})</span>
+                        </div>
                             <div>{{ client.os }}</div>
                             <div class="text-xs font-mono">{{ client.version }}</div>
                             <div class="text-xs text-gray-500 text-right">{{ formatDate(client.last_seen) }}</div>
@@ -174,7 +177,10 @@
                         <tr v-for="client in filteredClients" :key="client.id" class="hover:bg-blue-50 border-b last:border-b-0 transition-colors">
                         <td class="p-4">{{ client.hostname }}</td>
                         <td class="p-4 font-medium">{{ client.alias || '-' }}</td>
-                        <td class="p-4 font-mono text-gray-500">{{ client.ip }}</td>
+                        <td class="p-4 font-mono text-gray-500 cursor-pointer hover:text-blue-600" @click="openIpModal(client)">
+                            {{ client.ip }}
+                            <span v-if="client.ips && client.ips.length > 1" class="ml-1 text-xs text-gray-400">({{ client.ips.length }})</span>
+                        </td>
                         <td class="p-4">{{ client.os }}</td>
                         <td class="p-4 font-mono text-gray-500">{{ client.version }}</td>
                         <td class="p-4">
@@ -372,6 +378,34 @@
                 <div v-else class="text-red-500">{{ t('failedInfo') }}</div>
                 <div class="mt-6 flex justify-end">
                     <button @click="closeModal" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded">{{ t('close') }}</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- IP List Modal -->
+        <div v-if="activeModal === 'ips'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-lg w-full md:max-w-md m-4 md:m-0 p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-xl font-bold">{{ t('ips') }}: {{ selectedClient?.hostname }}</h3>
+                    <button @click="closeModal" class="text-gray-500 hover:text-gray-700">
+                        ✕
+                    </button>
+                </div>
+                <div class="max-h-96 overflow-y-auto">
+                    <ul class="divide-y divide-gray-200">
+                        <li v-for="ip in selectedClient?.ips" :key="ip" class="py-3 flex justify-between items-center">
+                            <span class="text-sm font-mono text-gray-700">{{ ip }}</span>
+                            <button @click="copyToClipboard(ip)" class="text-blue-600 hover:text-blue-800 text-xs px-2 py-1 rounded border border-blue-200 hover:bg-blue-50">
+                                {{ t('copy') }}
+                            </button>
+                        </li>
+                        <li v-if="!selectedClient?.ips || selectedClient?.ips.length === 0" class="py-4 text-center text-gray-500 text-sm">
+                            No IPs found.
+                        </li>
+                    </ul>
+                </div>
+                <div class="mt-6 flex justify-end">
+                    <button @click="closeModal" class="bg-gray-100 hover:bg-gray-200 text-gray-800 px-4 py-2 rounded transition">{{ t('close') }}</button>
                 </div>
             </div>
         </div>
@@ -1160,6 +1194,8 @@
                         version: 'Version',
                         id: 'ID',
                         lastSeen: 'Last Seen',
+                        ips: 'IP List',
+                        copy: 'Copy',
                         actions: 'Actions',
                         noClients: 'No clients connected.',
                         hardware: 'Hardware',
@@ -1309,6 +1345,8 @@
                         version: '版本',
                         id: 'ID',
                         lastSeen: '最后心跳',
+                        ips: 'IP地址列表',
+                        copy: '复制',
                         actions: '操作',
                         noClients: '暂无客户端连接',
                         hardware: '硬件信息',
@@ -1569,6 +1607,19 @@
                         }
                     } catch (e) {
                         // Error handled in UI via v-else
+                    }
+                }
+
+                const openIpModal = (client) => {
+                    selectedClient.value = client
+                    activeModal.value = 'ips'
+                }
+
+                const copyToClipboard = async (text) => {
+                    try {
+                        await navigator.clipboard.writeText(text);
+                    } catch (err) {
+                        console.error('Failed to copy: ', err);
                     }
                 }
 
@@ -2570,7 +2621,7 @@
                     searchQuery, statusFilter, filteredClients,
                     hardwareInfo, shellInput, shellOutput, shellFileInput, shellOutputRef,
                     currentPath, fileList, fileInput,
-                    openHardware, openShell, runShellCommand, triggerShellUpload, handleShellUpload,
+                    openHardware, openIpModal, copyToClipboard, openShell, runShellCommand, triggerShellUpload, handleShellUpload,
                     openFiles, listFiles, 
                     triggerFileUpload, handleFileUpload, downloadFromClient, deleteClient,
                     openEditor, closeEditor, saveFile, editorFile, editorContent,
