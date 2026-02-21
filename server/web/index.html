@@ -68,7 +68,50 @@
                                     <button @click="showPasswordModal = true" class="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">{{ t('changePassword') }}</button>
                                     <button @click="logout" class="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100">{{ t('logout') }}</button>
                                 </div>
-                            </div>
+                
+        <!-- Dangerous Command Warning Modal -->
+        <div v-if="activeModal === 'dangerousWarning'" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-2xl w-full max-w-md border-l-4 border-red-500 overflow-hidden transform transition-all scale-100">
+                <div class="p-6">
+                    <div class="flex items-center gap-3 mb-4 text-red-600">
+                        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        <h3 class="text-xl font-bold">{{ t('dangerousCommandDetected') }}</h3>
+                    </div>
+                    
+                    <p class="text-gray-600 mb-4">
+                        {{ t('dangerousCommandMessage') }}
+                    </p>
+                    
+                    <div class="bg-gray-100 p-3 rounded mb-4 font-mono text-sm border border-gray-200">
+                        <div class="text-gray-500 text-xs uppercase mb-1">{{ t('command') }}</div>
+                        <div class="font-bold text-gray-800 break-all">{{ pendingDangerousCommand }}</div>
+                    </div>
+                    
+                    <div class="bg-red-50 p-3 rounded mb-6 text-red-700 text-sm border border-red-100 flex items-start gap-2">
+                        <span class="font-bold">⚠️ {{ t('warning') }}:</span>
+                        <span>{{ t(dangerousCommandWarning) }}</span>
+                    </div>
+
+                    <div v-if="authEnabled" class="mb-6">
+                        <label class="block text-gray-700 text-sm font-bold mb-2">{{ t('password') }}</label>
+                        <input type="password" v-model="dangerousAuthPassword" class="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-red-500 outline-none" :placeholder="t('password')" @keyup.enter="verifyAndExecute">
+                        <p class="text-xs text-gray-500 mt-1">{{ t('passwordRequiredConfirm') }}</p>
+                    </div>
+                    
+                    <div class="flex justify-end gap-3">
+                        <button @click="cancelDangerousCommand" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded font-medium transition-colors">
+                            {{ t('cancel') }}
+                        </button>
+                        <button @click="verifyAndExecute" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded font-medium shadow-md transition-colors flex items-center gap-2">
+                            <span>{{ t('verifyExecute') }}</span>
+                            <span class="text-xs opacity-75">→</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>            </div>
                         </div>
 
                         <button @click="toggleLang" class="bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded text-xs font-medium transition">
@@ -1406,6 +1449,22 @@
                         commandHistory: 'Command History',
                         noHistory: 'No history available',
                         historyHint: 'Use Up/Down arrows to navigate history',
+                        dangerousCommandDetected: 'Dangerous Command Detected',
+                        dangerousCommandMessage: 'The command you are trying to execute matches a pattern associated with potentially destructive actions.',
+                        warning: 'Warning',
+                        passwordRequiredConfirm: 'Please enter your password to confirm execution.',
+                        verifyExecute: 'Verify & Execute',
+                        verificationError: 'Verification error',
+                        // Dangerous patterns messages
+                        riskDeleteRoot: 'High risk of deleting root directory',
+                        riskFormat: 'Formatting file system',
+                        riskDd: 'Low-level data copying (potential disk overwrite)',
+                        riskForkBomb: 'Fork bomb',
+                        riskOverwriteDevice: 'Overwriting block device',
+                        riskUnsafePermission: 'Unsafe global permission change',
+                        riskPipeShell: 'Pipe to shell (remote execution)',
+                        riskShutdown: 'System shutdown',
+                        riskReboot: 'System reboot',
                     },
                     zh: {
                         dashboardTitle: 'Roam 控制台',
@@ -1572,6 +1631,22 @@
                         cmdVer: '系统版本',
                         cmdDisk: '磁盘使用',
                         cmdMem: '内存使用',
+                        dangerousCommandDetected: '检测到危险命令',
+                        dangerousCommandMessage: '您尝试执行的命令匹配潜在的破坏性操作模式。',
+                        warning: '警告',
+                        passwordRequiredConfirm: '请输入密码以确认执行。',
+                        verifyExecute: '验证并执行',
+                        verificationError: '验证错误',
+                        // Dangerous patterns messages
+                        riskDeleteRoot: '删除根目录的高风险操作',
+                        riskFormat: '格式化文件系统',
+                        riskDd: '底层数据复制 (可能覆盖磁盘)',
+                        riskForkBomb: 'Fork炸弹',
+                        riskOverwriteDevice: '覆盖块设备',
+                        riskUnsafePermission: '不安全的全局权限更改',
+                        riskPipeShell: '管道到Shell (远程执行)',
+                        riskShutdown: '系统关机',
+                        riskReboot: '系统重启',
                     }
                 }
 
@@ -1814,9 +1889,119 @@
                     runShellCommand()
                 }
 
-                const runShellCommand = async () => {
+                const dangerousCommandWarning = ref('')
+                const pendingDangerousCommand = ref('')
+                const dangerousAuthPassword = ref('')
+                const dangerousActionType = ref('') // 'shell' or 'script'
+
+                const DANGEROUS_PATTERNS = [
+                    { pattern: /\brm\s+-(?:r|f|rf|fr)\s+(?:\/|\/\*)/, message: 'riskDeleteRoot' },
+                    { pattern: /\bmkfs/, message: 'riskFormat' },
+                    { pattern: /\bdd\b/, message: 'riskDd' },
+                    { pattern: /:(){:|:&};:/, message: 'riskForkBomb' },
+                    { pattern: />\s*\/dev\/sd/, message: 'riskOverwriteDevice' },
+                    { pattern: /\bchmod\s+-R\s+777\s+\//, message: 'riskUnsafePermission' },
+                    { pattern: /\bwget\s+.*\|\s*sh/, message: 'riskPipeShell' },
+                    { pattern: /\bcurl\s+.*\|\s*sh/, message: 'riskPipeShell' },
+                    { pattern: /\bshutdown\b/, message: 'riskShutdown' },
+                    { pattern: /\breboot\b/, message: 'riskReboot' },
+                    { pattern: /\binit\s+0\b/, message: 'riskShutdown' },
+                ]
+
+                const checkDangerousCommand = (cmd) => {
+                    for (const p of DANGEROUS_PATTERNS) {
+                        if (p.pattern.test(cmd)) {
+                            return p.message;
+                        }
+                    }
+                    return null;
+                }
+
+                const verifyAndExecute = async () => {
+                    if (authEnabled.value) {
+                        if (!dangerousAuthPassword.value) {
+                            alert(t('password') + ' is required');
+                            return;
+                        }
+                        // Verify password
+                        try {
+                            const res = await fetch('/api/auth/login', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ username: username.value, password: dangerousAuthPassword.value })
+                            })
+                            
+                            if (!res.ok) {
+                                alert(t('loginFailed'));
+                                return;
+                            }
+                        } catch (e) {
+                            alert(t('verificationError') + ': ' + e.message);
+                            return;
+                        }
+                    }
+
+                    if (dangerousActionType.value === 'shell') {
+                        activeModal.value = 'shell'
+                        runShellCommand(true)
+                    } else if (dangerousActionType.value === 'script') {
+                        // Restore runScript modal before executing so if it fails we are back there?
+                        // Actually runScriptAction calls closeModal() on success.
+                        // If we are here, we are closing dangerousWarning.
+                        // If runScriptAction fails, we might want to be back in runScript?
+                        // Let's just run it.
+                        runScriptAction();
+                        // If it succeeds, it closes modal.
+                        // If it fails, it alerts. The dangerousWarning modal is still open? 
+                        // No, we should close dangerousWarning.
+                        // But runScriptAction is async.
+                        // If runScriptAction fails, we probably want to return to 'runScript' modal?
+                        // runScriptAction handles UI flow (alerts).
+                        // Let's just close dangerousWarning here or let runScriptAction handle it.
+                        // runScriptAction calls closeModal().
+                        // But we are in dangerousWarning.
+                        // Let's restore 'runScript' if we want to show it?
+                        // Actually runScriptAction doesn't expect a specific modal open, but it does `closeModal()` on success.
+                        // Let's just set activeModal to 'runScript' so if runScriptAction fails, user sees the form again.
+                        activeModal.value = 'runScript';
+                    }
+                    
+                    pendingDangerousCommand.value = ''
+                    dangerousCommandWarning.value = ''
+                    dangerousAuthPassword.value = ''
+                }
+
+                const cancelDangerousCommand = () => {
+                    if (dangerousActionType.value === 'shell') {
+                        activeModal.value = 'shell'
+                    } else if (dangerousActionType.value === 'script') {
+                        activeModal.value = 'runScript'
+                    } else {
+                        activeModal.value = ''
+                    }
+                    pendingDangerousCommand.value = ''
+                    dangerousCommandWarning.value = ''
+                    dangerousAuthPassword.value = ''
+                }
+
+                const runShellCommand = async (force = false) => {
+                    // Handle event object passed by @keyup
+                    if (typeof force !== 'boolean') force = false
+
                     if (!shellInput.value.trim()) return
                     const cmd = shellInput.value.trim()
+
+                    if (!force) {
+                        const warning = checkDangerousCommand(cmd);
+                        if (warning) {
+                            dangerousCommandWarning.value = warning;
+                            pendingDangerousCommand.value = cmd;
+                            dangerousActionType.value = 'shell';
+                            dangerousAuthPassword.value = '';
+                            activeModal.value = 'dangerousWarning';
+                            return;
+                        }
+                    }
                     
                     // Add to history
                     if (shellHistory.value.length === 0 || shellHistory.value[0] !== cmd) {
@@ -2436,9 +2621,7 @@
                     activeModal.value = 'runScript'
                 }
 
-                const executeScript = async () => {
-                    if (!selectedScript.value || selectedClientIds.value.length === 0) return
-                    
+                const runScriptAction = async () => {
                     try {
                         const res = await apiFetch(`/api/scripts/${selectedScript.value.id}/run`, {
                             method: 'POST',
@@ -2458,6 +2641,30 @@
                     } catch (e) {
                         alert('Error: ' + e.message)
                     }
+                }
+
+                const executeScript = async () => {
+                    if (!selectedScript.value || selectedClientIds.value.length === 0) return
+                    
+                    // Check for dangerous commands in script steps
+                    if (selectedScript.value.steps) {
+                        for (const step of selectedScript.value.steps) {
+                            if (step.type === 'Shell' && step.payload) {
+                                const cmdStr = `${step.payload.cmd} ${(step.payload.args || []).join(' ')}`.trim();
+                                const warning = checkDangerousCommand(cmdStr);
+                                if (warning) {
+                                    dangerousCommandWarning.value = warning;
+                                    pendingDangerousCommand.value = cmdStr;
+                                    dangerousActionType.value = 'script';
+                                    dangerousAuthPassword.value = '';
+                                    activeModal.value = 'dangerousWarning';
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    
+                    runScriptAction();
                 }
 
                 const fetchHistory = async () => {
@@ -2820,6 +3027,7 @@
                     currentShellDir, showShellHistory, shellHistory, selectHistoryCommand, runHistoryCommand,
                     currentPath, fileList, fileInput,
                     openHardware, openIpModal, copyToClipboard, openShell, runShellCommand, navigateHistory, triggerShellUpload, handleShellUpload,
+                    verifyAndExecute, cancelDangerousCommand, pendingDangerousCommand, dangerousCommandWarning, dangerousAuthPassword,
                     openFiles, listFiles, 
                     triggerFileUpload, handleFileUpload, downloadFromClient, deleteClient,
                     openEditor, closeEditor, saveFile, editorFile, editorContent,
