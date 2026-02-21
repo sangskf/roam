@@ -10,6 +10,27 @@ pub fn install_service() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Failed to get executable directory"))?
         .to_path_buf();
 
+    // Copy .env, cert.pem, key.pem if they exist in current directory
+    let current_dir = std::env::current_dir()?;
+    let files_to_copy = vec![".env", "cert.pem", "key.pem"];
+    
+    for filename in files_to_copy {
+        let src = current_dir.join(filename);
+        let dst = working_dir.join(filename);
+        
+        // Don't copy if src and dst are the same file
+        if src == dst {
+            continue;
+        }
+
+        if src.exists() {
+            match std::fs::copy(&src, &dst) {
+                Ok(_) => println!("Copied {} to service directory: {}", filename, dst.display()),
+                Err(e) => eprintln!("Warning: Failed to copy {} to {}: {}", filename, dst.display(), e),
+            }
+        }
+    }
+
     #[cfg(windows)]
     let args = vec!["run-service".into()];
     #[cfg(not(windows))]

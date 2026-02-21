@@ -28,6 +28,16 @@ impl ServerConfig {
             .add_source(config::Environment::with_prefix("APP"));
 
         let config = builder.build()?;
-        Ok(config.try_deserialize()?)
+        let mut server_config: ServerConfig = config.try_deserialize()?;
+
+        // Auto-detect certificates if not configured
+        if server_config.tls_cert_path.is_none() && server_config.tls_key_path.is_none() {
+            if std::path::Path::new("cert.pem").exists() && std::path::Path::new("key.pem").exists() {
+                server_config.tls_cert_path = Some("cert.pem".to_string());
+                server_config.tls_key_path = Some("key.pem".to_string());
+            }
+        }
+
+        Ok(server_config)
     }
 }
