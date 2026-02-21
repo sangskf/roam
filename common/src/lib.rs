@@ -56,7 +56,7 @@ pub enum CommandPayload {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "status", content = "data")]
 pub enum CommandResult {
-    ShellOutput { stdout: String, stderr: String, exit_code: i32 },
+    ShellOutput { stdout: String, stderr: String, exit_code: i32, cwd: String },
     DirChanged { new_path: String },
     FileList { files: Vec<FileInfo> },
     FileContent { content: String },

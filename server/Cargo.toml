@@ -29,6 +29,8 @@ walkdir = "2.5.0"
 chrono = "0.4.43"
 sha2 = "0.10.9"
 hex = "0.4.3"
+rustls = { version = "0.23", features = ["ring"] }
+axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"

@@ -9,6 +9,8 @@ pub struct ServerConfig {
     pub auth_token: String,
     pub web_auth_enabled: bool,
     pub web_jwt_secret: String,
+    pub tls_cert_path: Option<String>,
+    pub tls_key_path: Option<String>,
 }
 
 impl ServerConfig {
@@ -20,6 +22,8 @@ impl ServerConfig {
             .set_default("auth_token", "secret-token")?
             .set_default("web_auth_enabled", true)?
             .set_default("web_jwt_secret", "roam-secret-key")?
+            .set_default("tls_cert_path", None::<String>)?
+            .set_default("tls_key_path", None::<String>)?
             .add_source(File::with_name("server_config").required(false))
             .add_source(config::Environment::with_prefix("APP"));
 

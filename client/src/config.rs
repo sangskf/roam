@@ -7,6 +7,7 @@ pub struct ClientConfig {
     pub auth_token: String,
     pub heartbeat_interval_sec: u64,
     pub alias: Option<String>,
+    pub tls_insecure: bool,
 }
 
 impl ClientConfig {
@@ -16,6 +17,7 @@ impl ClientConfig {
             .set_default("auth_token", "secret-token")?
             .set_default("heartbeat_interval_sec", 10)?
             .set_default("alias", None::<String>)?
+            .set_default("tls_insecure", false)?
             .add_source(File::with_name("client_config").required(false))
             .add_source(config::Environment::with_prefix("APP"));
 

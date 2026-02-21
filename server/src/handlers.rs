@@ -422,7 +422,6 @@ pub async fn run_script(
 
 use walkdir::WalkDir;
 use zip::write::FileOptions;
-use std::io;
 
 fn zip_directory(src_dir: &str, dst_file: &str) -> anyhow::Result<()> {
     if !std::path::Path::new(src_dir).is_dir() {
@@ -489,20 +488,22 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
         if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
             progress.current_step = i + 1;
         }
+        
+        let scheme = if state.config.tls_cert_path.is_some() { "https" } else { "http" };
 
         let cmd_payload_result = match step {
             ScriptStep::Shell { cmd, args } => Ok(CommandPayload::ShellExec { cmd: cmd.clone(), args: args.clone() }),
             ScriptStep::Upload { local_path, remote_path } => {
-                let download_url = format!("http://{}/api/files/download/staging/{}", server_host, local_path);
+                let download_url = format!("{}://{}/api/files/download/staging/{}", scheme, server_host, local_path);
                 Ok(CommandPayload::DownloadFile { url: download_url, dest_path: remote_path.clone() })
             },
             ScriptStep::Download { remote_path, browser_download } => {
                 let upload_id = Uuid::new_v4();
-                let upload_url = format!("http://{}/api/files/client-upload/{}", server_host, upload_id);
+                let upload_url = format!("{}://{}/api/files/client-upload/{}", scheme, server_host, upload_id);
                 
                 if browser_download.unwrap_or(false) {
                     let file_name = std::path::Path::new(remote_path).file_name().unwrap_or_default().to_string_lossy();
-                    let download_link = format!("http://{}/api/files/download/client_data/{}/{}", server_host, upload_id, file_name);
+                    let download_link = format!("{}://{}/api/files/download/client_data/{}/{}", scheme, server_host, upload_id, file_name);
                     let log_msg = format!("BROWSER_DOWNLOAD: {}", download_link);
                     logs.push(log_msg.clone());
                     if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
@@ -520,7 +521,7 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
                 
                 match zip_directory(&src_dir, &dst_zip) {
                     Ok(_) => {
-                        let download_url = format!("http://{}/api/files/download/staging/{}", server_host, zip_name);
+                        let download_url = format!("{}://{}/api/files/download/staging/{}", scheme, server_host, zip_name);
                         Ok(CommandPayload::DownloadAndUnzip { url: download_url, dest_path: remote_path.clone() })
                     },
                     Err(e) => Err(format!("Failed to zip directory: {}", e))
@@ -529,11 +530,11 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
             ScriptStep::DownloadDir { remote_path, browser_download } => {
                 let upload_id = Uuid::new_v4();
                 // Client will upload a zip file, server receives it as generic file upload
-                let upload_url = format!("http://{}/api/files/client-upload/{}", server_host, upload_id);
+                let upload_url = format!("{}://{}/api/files/client-upload/{}", scheme, server_host, upload_id);
                 
                 if browser_download.unwrap_or(false) {
                     let file_name = format!("{}.zip", std::path::Path::new(remote_path).file_name().unwrap_or_default().to_string_lossy());
-                    let download_link = format!("http://{}/api/files/download/client_data/{}/{}", server_host, upload_id, file_name);
+                    let download_link = format!("{}://{}/api/files/download/client_data/{}/{}", scheme, server_host, upload_id, file_name);
                     let log_msg = format!("BROWSER_DOWNLOAD: {}", download_link);
                     logs.push(log_msg.clone());
                     if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
@@ -597,14 +598,14 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
                          CommandResult::Error(e) => {
                              format!("Step {}: Failed: {}", i + 1, e)
                          },
-                         CommandResult::ShellOutput { stdout, stderr, exit_code } => {
-                             if *exit_code != 0 {
-                                 format!("Step {}: Shell command failed (Exit Code: {}). Stderr: {}", i + 1, exit_code, stderr)
-                             } else {
-                                 step_success = true;
-                                 format!("Step {}: Completed. Output: {}", i + 1, stdout)
-                             }
-                         },
+                         CommandResult::ShellOutput { stdout, stderr, exit_code, .. } => {
+                            if *exit_code != 0 {
+                                format!("Step {}: Shell command failed (Exit Code: {}). Stderr: {}", i + 1, exit_code, stderr)
+                            } else {
+                                step_success = true;
+                                format!("Step {}: Completed. Output: {}", i + 1, stdout)
+                            }
+                        },
                          res => {
                              step_success = true;
                              format!("Step {}: Completed. Result: {:?}", i + 1, res)
@@ -723,6 +724,7 @@ pub async fn clear_script_history(
 
 // API: Admin uploads file to Staging (to be downloaded by Client)
 pub async fn upload_file_admin(
+    State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     mut multipart: Multipart
 ) -> impl IntoResponse {
@@ -748,8 +750,13 @@ pub async fn upload_file_admin(
         }
         
         // Construct download URL
-        let host = headers.get("host").and_then(|h| h.to_str().ok()).unwrap_or("localhost:3333");
-        let url = format!("http://{}/api/files/download/staging/{}", host, file_name);
+        let scheme = if state.config.tls_cert_path.is_some() { "https" } else { "http" };
+        let host = headers.get("host")
+            .and_then(|h| h.to_str().ok())
+            .map(|h| h.to_string())
+            .unwrap_or_else(|| format!("{}:{}", state.config.host, state.config.port));
+            
+        let url = format!("{}://{}/api/files/download/staging/{}", scheme, host, file_name);
         
         return (StatusCode::OK, Json(serde_json::json!({ "url": url }))).into_response();
     }

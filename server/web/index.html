@@ -414,7 +414,12 @@
         <div v-if="activeModal === 'shell'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div class="bg-white rounded-lg shadow-lg flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full md:w-3/4 lg:w-1/2 h-[80vh] md:h-[600px]'">
                 <div class="flex justify-between items-center p-4 border-b bg-gray-50 rounded-t-lg">
-                    <h3 class="font-bold text-lg">{{ t('remoteShell') }}: {{ selectedClient?.hostname }}</h3>
+                    <div>
+                        <h3 class="font-bold text-lg">{{ t('remoteShell') }}: {{ selectedClient?.hostname }}</h3>
+                        <div v-if="currentShellDir" class="text-sm font-mono text-blue-600 flex items-center gap-1 mt-1">
+                            <span>📂</span> {{ currentShellDir }}
+                        </div>
+                    </div>
                     <div class="flex items-center gap-2">
                          <div class="flex items-center bg-white border rounded shadow-sm">
                              <button @click="toggleMaximize" class="px-3 py-1 hover:bg-gray-100 text-gray-600 border-r" :title="isMaximized ? t('restore') : t('maximize')">
@@ -427,13 +432,61 @@
                          </div>
                     </div>
                 </div>
-                <div ref="shellOutputRef" class="flex-1 bg-gray-900 text-green-400 p-4 mx-4 mt-4 mb-4 rounded font-mono text-sm overflow-auto whitespace-pre-wrap">{{ shellOutput }}</div>
-                <form @submit.prevent="runShellCommand" class="flex gap-2 mx-4 mb-4">
-                    <input v-model="shellInput" type="text" :placeholder="t('enterCommand')" class="flex-1 border rounded px-3 py-2 font-mono" autofocus>
-                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">{{ t('run') }}</button>
-                    <button type="button" @click="triggerShellUpload" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded flex items-center gap-1" :title="t('upload')">
-                        {{ t('upload') }}
-                    </button>
+                <div ref="shellOutputRef" class="flex-1 bg-gray-900 text-green-400 p-4 mx-4 mt-4 mb-4 rounded font-mono text-sm overflow-auto whitespace-pre-wrap relative">
+                    <div v-if="showShellHistory" class="absolute inset-0 bg-white bg-opacity-95 text-gray-800 p-4 overflow-auto z-10 rounded">
+                        <div class="flex justify-between items-center mb-4 border-b pb-2">
+                            <h4 class="font-bold text-lg">{{ t('commandHistory') }}</h4>
+                            <button @click="showShellHistory = false" class="text-gray-500 hover:text-red-500 px-2">✕</button>
+                        </div>
+                        <div v-if="shellHistory.length === 0" class="text-center text-gray-500 py-8">{{ t('noHistory') }}</div>
+                        <ul v-else class="space-y-1">
+                            <li v-for="(cmd, index) in shellHistory" :key="index" 
+                                class="flex items-center justify-between p-2 hover:bg-blue-50 rounded cursor-pointer group border-b border-gray-100"
+                                @click="selectHistoryCommand(cmd)">
+                                <span class="font-mono text-sm truncate flex-1">{{ cmd }}</span>
+                                <button @click.stop="runHistoryCommand(cmd)" class="bg-blue-100 text-blue-600 hover:bg-blue-600 hover:text-white px-3 py-1 rounded text-xs opacity-0 group-hover:opacity-100 transition-opacity">
+                                    {{ t('run') }}
+                                </button>
+                            </li>
+                        </ul>
+                    </div>
+                    {{ shellOutput }}
+                </div>
+                
+                <!-- Recommended Commands -->
+                <div v-if="recommendedCommands.length > 0" class="mx-4 mb-2 overflow-x-auto whitespace-nowrap scrollbar-hide">
+                    <div class="flex gap-2 pb-2">
+                        <button 
+                            v-for="cmd in recommendedCommands" 
+                            :key="cmd.label"
+                            @click="shellInput = cmd.command"
+                            class="px-3 py-1 bg-gray-100 hover:bg-blue-100 hover:text-blue-700 text-gray-700 text-xs rounded-full border transition-colors duration-200 flex items-center gap-1 flex-shrink-0"
+                            :title="cmd.desc"
+                        >
+                            <span class="font-medium">{{ cmd.label }}</span>
+                        </button>
+                    </div>
+                </div>
+
+                <form @submit.prevent="runShellCommand" class="flex flex-col gap-1 mx-4 mb-4">
+                    <div class="flex gap-2">
+                        <div class="relative flex-1">
+                             <input v-model="shellInput" @keydown.up.prevent="navigateHistory('up')" @keydown.down.prevent="navigateHistory('down')" type="text" :placeholder="t('enterCommand')" class="w-full border rounded px-3 py-2 font-mono pr-8" autofocus>
+                             <div class="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 text-xs pointer-events-none">
+                                 ↑↓
+                             </div>
+                        </div>
+                        <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">{{ t('run') }}</button>
+                        <button type="button" @click="showShellHistory = !showShellHistory" class="bg-gray-500 hover:bg-gray-600 text-white px-3 py-2 rounded flex items-center gap-1" :title="t('history')">
+                            🕒
+                        </button>
+                        <button type="button" @click="triggerShellUpload" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded flex items-center gap-1" :title="t('upload')">
+                            {{ t('upload') }}
+                        </button>
+                    </div>
+                    <div class="text-xs text-gray-400 pl-1">
+                        {{ t('historyHint') }}
+                    </div>
                 </form>
                 <!-- Hidden file input for shell upload -->
                 <input type="file" ref="shellFileInput" class="hidden" @change="handleShellUpload">
@@ -986,6 +1039,11 @@
                 const activeModal = ref(null)
                 const selectedClient = ref(null)
                 const commandLoading = ref(false)
+                
+                // Shell History & CWD
+                const shellHistory = ref(JSON.parse(localStorage.getItem('shell_history') || '[]'))
+                const shellHistoryIndex = ref(-1)
+                const currentShellDir = ref('')
 
                 // Auth
                 const authEnabled = ref(true) // Default to true (secure by default)
@@ -1124,6 +1182,7 @@
                 const shellOutput = ref('')
                 const shellOutputRef = ref(null)
                 const shellFileInput = ref(null)
+                const showShellHistory = ref(false)
 
                 watch(shellOutput, async () => {
                     await nextTick()
@@ -1334,6 +1393,19 @@
                         date: 'Date',
                         previewError: 'Preview failed or unsupported format',
                         confirmDeleteClient: 'Are you sure you want to remove this client?',
+                        recommendedCommands: 'Recommended Commands',
+                        cmdDir: 'List Directory',
+                        cmdIp: 'Network Config',
+                        cmdSysInfo: 'System Info',
+                        cmdWhoAmI: 'Current User',
+                        cmdTask: 'Running Processes',
+                        cmdNetstat: 'Network Stats',
+                        cmdVer: 'System Version',
+                        cmdDisk: 'Disk Usage',
+                        cmdMem: 'Memory Usage',
+                        commandHistory: 'Command History',
+                        noHistory: 'No history available',
+                        historyHint: 'Use Up/Down arrows to navigate history',
                     },
                     zh: {
                         dashboardTitle: 'Roam 控制台',
@@ -1478,6 +1550,9 @@
                         password: '密码',
                         loginFailed: '登录失败',
                         logout: '退出登录',
+                        commandHistory: '命令历史',
+                        noHistory: '暂无历史记录',
+                        historyHint: '使用 ↑ / ↓ 键切换历史命令',
                         changePassword: '修改密码',
                         oldPassword: '旧密码',
                         newPassword: '新密码',
@@ -1487,6 +1562,16 @@
                         items: '项',
                         date: '日期',
                         previewError: '预览失败或不支持的格式',
+                        recommendedCommands: '推荐命令',
+                        cmdDir: '列出目录',
+                        cmdIp: '网络配置',
+                        cmdSysInfo: '系统信息',
+                        cmdWhoAmI: '当前用户',
+                        cmdTask: '进程列表',
+                        cmdNetstat: '网络统计',
+                        cmdVer: '系统版本',
+                        cmdDisk: '磁盘使用',
+                        cmdMem: '内存使用',
                     }
                 }
 
@@ -1497,6 +1582,60 @@
                         return messages['en'][key] || key
                     }
                     return val
+                }
+
+                const recommendedCommands = computed(() => {
+                    if (!selectedClient.value) return [];
+                    
+                    const os = (selectedClient.value.os || '').toLowerCase();
+                    const platform = (selectedClient.value.platform || '').toLowerCase(); // Fallback if os is not precise enough
+                    
+                    const commands = [];
+                    
+                    if (os.includes('windows')) {
+                        commands.push(
+                            { label: 'Dir', command: 'dir', desc: t('cmdDir') },
+                            { label: 'IP', command: 'ipconfig', desc: t('cmdIp') },
+                            { label: 'SysInfo', command: 'systeminfo', desc: t('cmdSysInfo') },
+                            { label: 'WhoAmI', command: 'whoami', desc: t('cmdWhoAmI') },
+                            { label: 'Tasks', command: 'tasklist', desc: t('cmdTask') },
+                            { label: 'Netstat', command: 'netstat -ano', desc: t('cmdNetstat') },
+                            { label: 'Ver', command: 'ver', desc: t('cmdVer') }
+                        );
+                    } else if (os.includes('macos') || os.includes('darwin')) {
+                        commands.push(
+                            { label: 'List', command: 'ls -la', desc: t('cmdDir') },
+                            { label: 'IP', command: 'ifconfig', desc: t('cmdIp') },
+                            { label: 'SysInfo', command: 'sw_vers', desc: t('cmdSysInfo') },
+                            { label: 'Uname', command: 'uname -a', desc: t('cmdVer') },
+                            { label: 'WhoAmI', command: 'whoami', desc: t('cmdWhoAmI') },
+                            { label: 'Top', command: 'top -l 1 | head -n 10', desc: t('cmdTask') },
+                            { label: 'Disk', command: 'df -h', desc: t('cmdDisk') }
+                        );
+                    } else if (os.includes('linux')) {
+                        commands.push(
+                            { label: 'List', command: 'ls -la', desc: t('cmdDir') },
+                            { label: 'IP', command: 'ip addr', desc: t('cmdIp') },
+                            { label: 'SysInfo', command: 'uname -a', desc: t('cmdSysInfo') },
+                            { label: 'WhoAmI', command: 'whoami', desc: t('cmdWhoAmI') },
+                            { label: 'Procs', command: 'ps aux | head -n 10', desc: t('cmdTask') },
+                            { label: 'Disk', command: 'df -h', desc: t('cmdDisk') },
+                            { label: 'Mem', command: 'free -m', desc: t('cmdMem') }
+                        );
+                    } else {
+                        // Generic Fallback
+                         commands.push(
+                            { label: 'List', command: 'ls -la', desc: t('cmdDir') },
+                            { label: 'WhoAmI', command: 'whoami', desc: t('cmdWhoAmI') }
+                        );
+                    }
+                    
+                    return commands;
+                })
+
+                const runRecommendedCommand = (cmd) => {
+                    shellInput.value = cmd.command;
+                    runShellCommand();
                 }
 
                 const toggleLang = () => {
@@ -1623,22 +1762,78 @@
                     }
                 }
 
-                const openShell = (client) => {
+                const openShell = async (client) => {
                     selectedClient.value = client
                     activeModal.value = 'shell'
                     shellOutput.value = 'Ready to execute commands...'
                     shellInput.value = ''
                     isMaximized.value = false
+                    currentShellDir.value = ''
+                    
+                    // Probe CWD silently
+                    try {
+                        const probeCmd = client.os === 'windows' ? 'cd' : 'pwd'
+                        const result = await sendCommand(client.id, { 
+                            cmd_type: 'ShellExec', 
+                            args: { cmd: probeCmd, args: [] } 
+                        })
+                        if (result && result.status === 'ShellOutput' && result.data.cwd) {
+                            currentShellDir.value = result.data.cwd
+                        }
+                    } catch (e) {
+                        console.error('Failed to probe CWD', e)
+                    }
+                }
+
+                const navigateHistory = (direction) => {
+                    if (shellHistory.value.length === 0) return
+                    if (direction === 'up') {
+                        if (shellHistoryIndex.value < shellHistory.value.length - 1) {
+                            shellHistoryIndex.value++
+                            shellInput.value = shellHistory.value[shellHistoryIndex.value]
+                        }
+                    } else if (direction === 'down') {
+                        if (shellHistoryIndex.value > 0) {
+                            shellHistoryIndex.value--
+                            shellInput.value = shellHistory.value[shellHistoryIndex.value]
+                        } else if (shellHistoryIndex.value === 0) {
+                            shellHistoryIndex.value = -1
+                            shellInput.value = ''
+                        }
+                    }
+                }
+
+                const selectHistoryCommand = (cmd) => {
+                    shellInput.value = cmd
+                    showShellHistory.value = false
+                }
+
+                const runHistoryCommand = (cmd) => {
+                    shellInput.value = cmd
+                    showShellHistory.value = false
+                    runShellCommand()
                 }
 
                 const runShellCommand = async () => {
                     if (!shellInput.value.trim()) return
                     const cmd = shellInput.value.trim()
+                    
+                    // Add to history
+                    if (shellHistory.value.length === 0 || shellHistory.value[0] !== cmd) {
+                        shellHistory.value.unshift(cmd)
+                        if (shellHistory.value.length > 1000) {
+                            shellHistory.value.pop()
+                        }
+                        localStorage.setItem('shell_history', JSON.stringify(shellHistory.value))
+                    }
+                    shellHistoryIndex.value = -1
+
                     const parts = cmd.split(' ')
                     const command = parts[0]
                     const args = parts.slice(1)
                     
                     shellOutput.value += `\n> ${cmd}\n`
+                    shellInput.value = ''
                     
                     try {
                         const result = await sendCommand(selectedClient.value.id, { 
@@ -1648,14 +1843,15 @@
                         
                         if (result && result.status === 'ShellOutput') {
                             shellOutput.value += result.data.stdout + result.data.stderr;
+                            if (result.data.cwd) {
+                                currentShellDir.value = result.data.cwd
+                            }
                         } else if (result && result.status === 'Error') {
                             shellOutput.value += `Error: ${result.data}\n`;
                         }
                     } catch (e) {
                         shellOutput.value += `Error: ${e.message}\n`;
                     }
-                    
-                    shellInput.value = ''
                 }
 
                 const triggerShellUpload = () => {
@@ -1778,7 +1974,8 @@
                 const fetchClientFile = async (file) => {
                     const uploadId = crypto.randomUUID();
                     const host = window.location.host;
-                    const uploadUrl = `http://${host}/api/files/client-upload/${uploadId}`;
+                    const protocol = window.location.protocol;
+                    const uploadUrl = `${protocol}//${host}/api/files/client-upload/${uploadId}`;
                     
                     const srcPath = joinPath(currentPath.value, file.name);
                     
@@ -2619,9 +2816,10 @@
                 return {
                     clients, serverInfo, activeModal, selectedClient, commandLoading,
                     searchQuery, statusFilter, filteredClients,
-                    hardwareInfo, shellInput, shellOutput, shellFileInput, shellOutputRef,
+                    hardwareInfo, shellInput, shellOutput, shellFileInput, shellOutputRef, recommendedCommands, runRecommendedCommand,
+                    currentShellDir, showShellHistory, shellHistory, selectHistoryCommand, runHistoryCommand,
                     currentPath, fileList, fileInput,
-                    openHardware, openIpModal, copyToClipboard, openShell, runShellCommand, triggerShellUpload, handleShellUpload,
+                    openHardware, openIpModal, copyToClipboard, openShell, runShellCommand, navigateHistory, triggerShellUpload, handleShellUpload,
                     openFiles, listFiles, 
                     triggerFileUpload, handleFileUpload, downloadFromClient, deleteClient,
                     openEditor, closeEditor, saveFile, editorFile, editorContent,

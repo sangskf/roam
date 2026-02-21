@@ -100,7 +100,7 @@ fn unzip_file(zip_path: &std::path::Path, dest_dir: &std::path::Path) -> anyhow:
     Ok(())
 }
 
-pub async fn handle_command(cmd: CommandPayload) -> CommandResult {
+pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool) -> CommandResult {
     match cmd {
         CommandPayload::ShellExec { cmd, args } => {
             info!("Executing shell command: {} {:?}", cmd, args);
@@ -122,11 +122,13 @@ pub async fn handle_command(cmd: CommandPayload) -> CommandResult {
                         stdout: String::new(),
                         stderr: String::new(),
                         exit_code: 0,
+                        cwd: target_path.to_string_lossy().to_string(),
                     },
                     Err(e) => CommandResult::ShellOutput {
                         stdout: String::new(),
                         stderr: format!("cd: failed to change directory to {}: {}\n", target_path.display(), e),
                         exit_code: 1,
+                        cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).to_string_lossy().to_string(),
                     },
                 }
             } else {
@@ -189,6 +191,7 @@ pub async fn handle_command(cmd: CommandPayload) -> CommandResult {
                                     stdout,
                                     stderr,
                                     exit_code: output.status.code().unwrap_or(-1),
+                                    cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).to_string_lossy().to_string(),
                                 }
                             },
                             Err(e) => CommandResult::Error(format!("Failed to wait on child: {}", e)),
@@ -255,6 +258,7 @@ pub async fn handle_command(cmd: CommandPayload) -> CommandResult {
         CommandPayload::DownloadFile { url, dest_path } => {
             info!("Downloading file from {} to {}", url, dest_path);
             let client = match reqwest::Client::builder()
+                .danger_accept_invalid_certs(tls_insecure)
                 .timeout(std::time::Duration::from_secs(3600)) // 1 hour timeout for large files
                 .build() {
                     Ok(c) => c,
@@ -307,8 +311,8 @@ pub async fn handle_command(cmd: CommandPayload) -> CommandResult {
                     }
                 }
                 Err(e) => {
-                    error!("Request failed: {}", e);
-                    CommandResult::Error(format!("Request failed: {}", e))
+                    error!("Request failed: {:?}", e);
+                    CommandResult::Error(format!("Request failed: {:?}", e))
                 },
             }
         }
@@ -325,6 +329,7 @@ pub async fn handle_command(cmd: CommandPayload) -> CommandResult {
             match tokio::fs::read(&abs_path).await {
                 Ok(data) => {
                     let client = match reqwest::Client::builder()
+                        .danger_accept_invalid_certs(tls_insecure)
                         .timeout(std::time::Duration::from_secs(3600))
                         .build() {
                             Ok(c) => c,

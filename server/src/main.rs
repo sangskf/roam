@@ -27,6 +27,9 @@ enum Commands {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Install default crypto provider if possible (ignore if already installed)
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let cli = Cli::parse();
 
     // Initialize tracing

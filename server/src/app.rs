@@ -76,8 +76,23 @@ pub async fn run() -> anyhow::Result<()> {
 
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
     tracing::info!("listening on {}", addr);
-    let listener = TcpListener::bind(addr).await?;
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
+
+    if let (Some(cert_path), Some(key_path)) = (&config.tls_cert_path, &config.tls_key_path) {
+        tracing::info!("TLS enabled. Cert: {}, Key: {}", cert_path, key_path);
+        let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
+            cert_path,
+            key_path,
+        )
+        .await?;
+
+        axum_server::bind_rustls(addr, tls_config)
+            .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+            .await?;
+    } else {
+        tracing::info!("TLS disabled. Using plain TCP.");
+        let listener = TcpListener::bind(addr).await?;
+        axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
+    }
 
     Ok(())
 }

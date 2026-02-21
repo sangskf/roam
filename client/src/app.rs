@@ -1,5 +1,5 @@
 use futures_util::{SinkExt, StreamExt};
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message as WsMessage};
+use tokio_tungstenite::{connect_async, connect_async_tls_with_config, Connector, tungstenite::protocol::Message as WsMessage};
 use url::Url;
 use uuid::Uuid;
 use std::time::Duration;
@@ -7,12 +7,19 @@ use tokio::time;
 use tracing::{info, error, warn};
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
+use rustls::client::danger::{ServerCertVerifier, ServerCertVerified, HandshakeSignatureValid};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::DigitallySignedStruct;
 
 use common::Message;
 use crate::config::ClientConfig;
 use crate::command_handler;
 
 pub async fn run() -> anyhow::Result<()> {
+    // Install default crypto provider if not already installed
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // Load .env file
     // 1. Try loading from current directory (standard behavior)
     dotenvy::dotenv().ok();
@@ -74,7 +81,21 @@ fn get_or_create_client_id() -> anyhow::Result<Uuid> {
 
 async fn connect_and_run(client_id: Uuid, hostname: &str, os: &str, version: &str, config: &ClientConfig) -> anyhow::Result<()> {
     let url = Url::parse(&config.server_url)?;
-    let (ws_stream, _) = connect_async(url.to_string()).await?;
+    
+    let (ws_stream, _) = if config.tls_insecure {
+        info!("Connecting to server (insecure mode)...");
+        let tls_config = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoCertificateVerification))
+            .with_no_client_auth();
+            
+        let connector = Connector::Rustls(Arc::new(tls_config));
+        connect_async_tls_with_config(url.to_string(), None, false, Some(connector)).await?
+    } else {
+        info!("Connecting to server...");
+        connect_async(url.to_string()).await?
+    };
+    
     info!("Connected to server at {}", config.server_url);
 
     let (mut write, mut read) = ws_stream.split();
@@ -151,7 +172,7 @@ async fn connect_and_run(client_id: Uuid, hostname: &str, os: &str, version: &st
                          match parsed {
                              Message::Command { id, cmd } => {
                                  info!("Received command: {:?}", cmd);
-                                 let result = command_handler::handle_command(cmd).await;
+                                 let result = command_handler::handle_command(cmd, config.tls_insecure).await;
                                  info!("Command execution finished. Result: {:?}", result);
                                  let response = Message::Response { id, result };
                                  let json = serde_json::to_string(&response)?;
@@ -170,4 +191,47 @@ async fn connect_and_run(client_id: Uuid, hostname: &str, os: &str, version: &st
     
     heartbeat_task.abort();
     Ok(())
+}
+
+#[derive(Debug)]
+struct NoCertificateVerification;
+
+impl ServerCertVerifier for NoCertificateVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+            rustls::SignatureScheme::ED25519,
+        ]
+    }
 }
