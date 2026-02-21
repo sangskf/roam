@@ -31,6 +31,7 @@ sha2 = "0.10.9"
 hex = "0.4.3"
 rustls = { version = "0.23", features = ["ring"] }
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }
+rcgen = "0.14.7"
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"

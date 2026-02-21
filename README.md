@@ -12,9 +12,13 @@ Roam 是一个基于 Rust 开发的现代化远程维护与自动化编排工具
 - **Web 仪表盘**: 实时监控所有连接的客户端状态（主机名、IP、OS、版本）。
 - **硬件监控**: 查看远程主机的 CPU、内存使用率及平台信息。
 - **中英文切换**: 界面支持一键中英文切换。
+- **Web 安全认证**: 支持 Web 访问密码保护，保障控制台安全。
 
 ### 🛠️ 远程控制
 - **交互式 Shell**: 网页版远程终端，支持命令执行、实时输出流。
+  - **智能提示**: 根据客户端操作系统（Windows/Linux/macOS）自动推荐常用命令。
+  - **命令历史**: 记录最近 1000 条命令，支持上下键导航，提供快捷历史查看面板。
+  - **状态感知**: 实时显示当前工作目录 (CWD)，并支持 `cd` 命令切换目录。
 - **Shell 文件上传**: 在终端窗口直接上传文件到当前工作目录。
 - **文件管理**: 远程浏览文件系统，支持文件上传、下载、在线查看与编辑。
 
@@ -25,6 +29,8 @@ Roam 是一个基于 Rust 开发的现代化远程维护与自动化编排工具
 - **持久化存储**: 脚本和历史记录存储于 SQLite 数据库。
 
 ### 📦 系统集成
+- **TLS 加密**: 支持 HTTPS 和 WSS 安全连接，保障数据传输安全。
+- **证书管理**: 内置证书生成工具，可一键生成自签名证书。
 - **服务注册**: 内置服务管理功能，支持一键将 Server 或 Client 注册为系统服务（开机自启、守护进程）。
 - **多平台支持**: 完美支持 Windows, Linux, macOS。
 - **自我更新**: 支持远程下发更新指令，客户端自动下载并替换更新。
@@ -36,6 +42,7 @@ Roam 是一个基于 Rust 开发的现代化远程维护与自动化编排工具
   - 基于 `Axum` 的高性能 Web 框架。
   - `SQLx` + `SQLite` 进行数据持久化。
   - `WebSocket` 处理实时指令下发与日志回传。
+  - `Rustls` 提供 TLS 1.3 安全加密。
   - 嵌入式 Web 静态资源，开箱即用。
 - **客户端 (Client)**:
   - 基于 `Tokio` 的异步运行时。
@@ -64,29 +71,72 @@ cargo build --release
 
 **服务端配置 (`server/.env`)**:
 ```ini
+# 服务监听地址
 HOST=0.0.0.0
-PORT=3333
-AUTH_TOKEN=your_secure_token_here
+# 服务监听端口
+PORT=3334
+# 客户端连接认证 Token (Client 与 Server 必须一致)
+AUTH_TOKEN=secret-token
+# 数据库连接地址
 DATABASE_URL=sqlite:roam.db
-RUST_LOG=server=info,tower_http=info
+# Web 控制台是否启用登录认证 (true/false)
+WEB_AUTH_ENABLED=true
+# Web JWT 密钥
+WEB_JWT_SECRET=roam-secret-key
+# TLS 证书路径 (留空则禁用 TLS)
+TLS_CERT_PATH=cert.pem
+# TLS 私钥路径 (留空则禁用 TLS)
+TLS_KEY_PATH=key.pem
+# 日志级别
+RUST_LOG=server=debug,tower_http=debug
 ```
 
 **客户端配置 (`client/.env`)**:
 ```ini
-SERVER_URL=ws://localhost:3333/ws
-AUTH_TOKEN=your_secure_token_here
-HEARTBEAT_INTERVAL_SEC=5
+# 服务端连接地址 (启用 TLS 时使用 wss://, 否则使用 ws://)
+SERVER_URL=wss://localhost:3334/ws
+# 连接认证 Token
+AUTH_TOKEN=secret-token
+# 心跳间隔 (秒)
+HEARTBEAT_INTERVAL_SEC=10
+# 客户端别名 (可选)
 ALIAS=MyMacBook
-RUST_LOG=client=info
+# 是否跳过 TLS 证书验证 (自签名证书需设置为 true)
+TLS_INSECURE=true
+# 日志级别
+RUST_LOG=client=debug
 ```
 
-### 3. 运行服务端
+### 3. 生成 TLS 证书 (可选)
+
+如果你需要启用 HTTPS/WSS，可以使用服务端内置命令生成自签名证书：
+
+```bash
+# 默认生成 (localhost, 127.0.0.1, 0.0.0.0, ::1)
+./target/release/server gen-cert
+
+# 指定域名和 IP
+./target/release/server gen-cert --san example.com,192.168.1.100
+
+# 指定输出路径
+./target/release/server gen-cert --cert-out /path/to/cert.pem --key-out /path/to/key.pem
+```
+
+生成后，确保 `.env` 中的 `TLS_CERT_PATH` 和 `TLS_KEY_PATH` 指向正确的文件路径。
+
+### 4. 运行服务端
 
 **普通模式**:
 ```bash
 ./target/release/server
 ```
-服务启动后，访问浏览器: `http://localhost:3333`
+服务启动后，访问浏览器: `https://localhost:3334` (如果启用了 TLS) 或 `http://localhost:3334`。
+
+**默认登录账号**:
+- 用户名: `admin`
+- 密码: `admin`
+
+*(建议首次登录后修改密码)*
 
 **系统服务模式 (需管理员权限)**:
 ```bash
@@ -99,7 +149,7 @@ sudo ./target/release/server stop
 sudo ./target/release/server uninstall
 ```
 
-### 4. 运行客户端
+### 5. 运行客户端
 
 **普通模式**:
 ```bash
@@ -123,10 +173,31 @@ sudo ./target/release/client start
 4. **Download**: 下载 `/var/log/my-app.log` 进行检查。
 
 ### 远程 Shell 与文件传输
-- 在 Shell 窗口中，点击右上角的 "Upload" 按钮可以将文件直接上传到当前 Shell 所在的目录。
-- Shell 支持 `cd` 命令切换目录，并保持会话上下文。
+- **智能推荐**: 输入框下方会显示当前系统的常用命令（如 `ls`, `ps`, `top` 等），点击即可快速填入。
+- **历史记录**: 使用键盘 `↑` / `↓` 键切换历史命令，或点击输入框右侧的 `🕒` 按钮查看完整历史。
+- **文件上传**: 在 Shell 窗口中，点击右上角的 "Upload" 按钮可以将文件直接上传到当前 Shell 所在的目录。
+- **目录切换**: Shell 支持 `cd` 命令切换目录，并保持会话上下文，左上角会实时显示当前路径。
 
 ## 📂 项目结构
+
+## 📸 截图 (Screenshots)
+
+**登录 (Login)**
+![Dashboard](docs/images/login.png)
+
+**仪表盘 (Dashboard)**
+![Dashboard](docs/images/dashboard.png)
+
+**远程终端 (Remote Shell)**
+![Remote Shell](docs/images/shell.png)
+![Remote Shell](docs/images/log.png)
+
+**脚本编排 (Script Orchestration)**
+![Scripts](docs/images/script_group.png)
+
+**客户端更新 (Client Update)**
+![Scripts](docs/images/update1.png)
+![Scripts](docs/images/update.png)
 
 ```
 .
@@ -148,7 +219,7 @@ sudo ./target/release/client start
 ## 🛠️ 开发与贡献
 
 1. 克隆仓库
-2. 修改 `server/web/index.html` 进行前端开发（无需编译，刷新浏览器即可）。
+2. 修改 `server/web/index.html` 进行前端开发（无需编译，刷新浏览器即可，但需重启服务端以加载嵌入的 HTML）。
 3. 修改 Rust 代码后需重新编译 `cargo build`。
 
 ## 📄 License
