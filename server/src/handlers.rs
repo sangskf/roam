@@ -819,10 +819,11 @@ pub struct ClientSummary {
     pub version: String,
     pub status: String,
     pub last_seen: Option<String>,
+    pub started_at: Option<String>,
 }
 
 pub async fn list_clients(State(state): State<Arc<AppState>>) -> Json<Vec<ClientSummary>> {
-    let rows = sqlx::query("SELECT id, hostname, os, alias, ip, ips, version, status, last_seen FROM clients ORDER BY last_seen DESC")
+    let rows = sqlx::query("SELECT id, hostname, os, alias, ip, ips, version, status, last_seen, started_at FROM clients ORDER BY last_seen DESC")
         .fetch_all(&state.db)
         .await
         .unwrap_or_default();
@@ -840,11 +841,12 @@ pub async fn list_clients(State(state): State<Arc<AppState>>) -> Json<Vec<Client
         let db_version: Option<String> = r.get("version");
         let _db_status: String = r.get("status");
         let db_last_seen: Option<chrono::NaiveDateTime> = r.get("last_seen");
+        let db_started_at: Option<chrono::NaiveDateTime> = r.get("started_at");
         
         let last_seen = db_last_seen.map(|d| format!("{}Z", d.format("%Y-%m-%dT%H:%M:%S")));
         let parsed_db_ips: Vec<String> = db_ips.as_deref().and_then(|s| serde_json::from_str(s).ok()).unwrap_or_default();
 
-        let (hostname, os, alias, ip, ips, version, status) = if is_connected {
+        let (hostname, os, alias, ip, ips, version, status, started_at) = if is_connected {
             if let Some(conn) = state.clients.get(&id) {
                 (
                     conn.hostname.clone(),
@@ -853,7 +855,8 @@ pub async fn list_clients(State(state): State<Arc<AppState>>) -> Json<Vec<Client
                     conn.ip.clone(),
                     conn.ips.clone(),
                     conn.version.clone(),
-                    "online".to_string()
+                    "online".to_string(),
+                    conn.started_at.map(|d| format!("{}", d.format("%Y-%m-%dT%H:%M:%SZ")))
                 )
             } else {
                 (
@@ -863,7 +866,8 @@ pub async fn list_clients(State(state): State<Arc<AppState>>) -> Json<Vec<Client
                     db_ip.unwrap_or_default(),
                     parsed_db_ips,
                     db_version.unwrap_or_default(),
-                    "online".to_string()
+                    "online".to_string(),
+                    db_started_at.map(|d| format!("{}Z", d.format("%Y-%m-%dT%H:%M:%S")))
                 )
             }
         } else {
@@ -874,7 +878,8 @@ pub async fn list_clients(State(state): State<Arc<AppState>>) -> Json<Vec<Client
                 db_ip.unwrap_or_default(),
                 parsed_db_ips,
                 db_version.unwrap_or_default(),
-                "offline".to_string()
+                "offline".to_string(),
+                db_started_at.map(|d| format!("{}Z", d.format("%Y-%m-%dT%H:%M:%S")))
             )
         };
 
@@ -888,6 +893,7 @@ pub async fn list_clients(State(state): State<Arc<AppState>>) -> Json<Vec<Client
             version,
             status,
             last_seen,
+            started_at,
         }
     }).collect();
     Json(clients)
@@ -1129,6 +1135,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, addr: SocketAddr
     let alias: Option<String>;
     let version: String;
     let ips: Vec<String>;
+    let started_at: Option<chrono::DateTime<chrono::Utc>>;
 
     // We can't really read "first message" easily without consuming the stream.
     // So we'll enter a loop but expect registration first.
@@ -1146,7 +1153,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, addr: SocketAddr
     };
 
     match parse_message(msg) {
-        Ok(Message::Register { client_id: id, token, hostname: h, os: o, alias: a, version: v, ips: i }) => {
+        Ok(Message::Register { client_id: id, token, hostname: h, os: o, alias: a, version: v, ips: i, started_at: s }) => {
             // Verify token
             if token != state.config.auth_token {
                  let _ = sender.send(WsMessage::Text(serde_json::to_string(&Message::AuthFailed("Invalid token".into())).unwrap())).await;
@@ -1159,6 +1166,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, addr: SocketAddr
             alias = a;
             version = v;
             ips = i;
+            started_at = s;
             
             info!("Client registered: {} ({}) - {} [Alias: {:?}] [IP: {}] [Ver: {}]", client_id, hostname, os, alias, addr, version);
             
@@ -1166,10 +1174,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, addr: SocketAddr
             let client_id_str = client_id.to_string();
             let ip_str = addr.ip().to_string();
             let ips_json = serde_json::to_string(&ips).unwrap_or("[]".to_string());
+            let started_at_naive = started_at.map(|d| d.naive_utc());
             
             if let Err(e) = sqlx::query(
-                "INSERT INTO clients (id, hostname, os, last_seen, status, alias, ip, ips, version) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?)
-                 ON CONFLICT(id) DO UPDATE SET hostname = excluded.hostname, os = excluded.os, last_seen = CURRENT_TIMESTAMP, status = excluded.status, alias = excluded.alias, ip = excluded.ip, ips = excluded.ips, version = excluded.version"
+                "INSERT INTO clients (id, hostname, os, last_seen, status, alias, ip, ips, version, started_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(id) DO UPDATE SET hostname = excluded.hostname, os = excluded.os, last_seen = CURRENT_TIMESTAMP, status = excluded.status, alias = excluded.alias, ip = excluded.ip, ips = excluded.ips, version = excluded.version, started_at = excluded.started_at"
             )
             .bind(&client_id_str)
             .bind(&hostname)
@@ -1179,6 +1188,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, addr: SocketAddr
             .bind(&ip_str)
             .bind(&ips_json)
             .bind(&version)
+            .bind(started_at_naive)
             .execute(&state.db).await {
                 error!("Failed to persist client to DB: {}", e);
             }
@@ -1203,6 +1213,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, addr: SocketAddr
         ip: addr.ip().to_string(),
         ips: ips.clone(),
         version: version.clone(),
+        started_at,
     });
 
     // Spawn task to send messages FROM channel TO websocket

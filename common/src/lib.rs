@@ -13,6 +13,7 @@ pub enum Message {
         alias: Option<String>,
         version: String,
         ips: Vec<String>,
+        started_at: Option<chrono::DateTime<chrono::Utc>>,
     },
     AuthSuccess,
     AuthFailed(String),

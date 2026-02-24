@@ -146,6 +146,7 @@ async fn connect_and_run(client_id: Uuid, hostname: &str, os: &str, version: &st
         alias: config.alias.clone(),
         version: version.to_string(),
         ips,
+        started_at: Some(chrono::Utc::now()),
     };
     write.send(WsMessage::Text(serde_json::to_string(&register_msg)?)).await?;
 

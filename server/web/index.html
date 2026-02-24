@@ -190,7 +190,8 @@
                         </div>
                             <div>{{ client.os }}</div>
                             <div class="text-xs font-mono">{{ client.version }}</div>
-                            <div class="text-xs text-gray-500 text-right">{{ formatDate(client.last_seen) }}</div>
+                            <div class="text-xs text-gray-500 text-right">{{ formatDate(client.started_at) }}</div>
+                            <div class="text-xs text-gray-500 col-span-2 text-right">{{ formatDate(client.last_seen) }}</div>
                         </div>
                         <div class="flex gap-2">
                             <button @click="openHardware(client)" :disabled="client.status === 'offline'" :class="['flex-1 py-2 rounded border text-center text-sm', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-green-600 hover:bg-green-100 border-green-200']">{{ t('hardware') }}</button>
@@ -205,14 +206,31 @@
                 </div>
                 <table class="hidden md:table w-full text-left border-collapse">
                     <thead class="sticky top-0 bg-gray-50 z-10 shadow-sm">
-                        <tr class="text-gray-700 text-sm">
-                            <th class="p-4 border-b">{{ t('hostname') }}</th>
-                            <th class="p-4 border-b">{{ t('alias') }}</th>
-                            <th class="p-4 border-b">{{ t('ipAddress') }}</th>
-                            <th class="p-4 border-b">{{ t('os') }}</th>
-                            <th class="p-4 border-b">{{ t('version') }}</th>
-                            <th class="p-4 border-b">{{ t('status') }}</th>
-                            <th class="p-4 border-b">{{ t('lastSeen') }}</th>
+                        <tr class="text-gray-700 text-sm select-none">
+                            <th class="p-4 border-b cursor-pointer hover:bg-gray-100" @click="toggleSort('hostname')">
+                                {{ t('hostname') }} <span v-if="sortKey === 'hostname'">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+                            </th>
+                            <th class="p-4 border-b cursor-pointer hover:bg-gray-100" @click="toggleSort('alias')">
+                                {{ t('alias') }} <span v-if="sortKey === 'alias'">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+                            </th>
+                            <th class="p-4 border-b cursor-pointer hover:bg-gray-100" @click="toggleSort('ip')">
+                                {{ t('ipAddress') }} <span v-if="sortKey === 'ip'">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+                            </th>
+                            <th class="p-4 border-b cursor-pointer hover:bg-gray-100" @click="toggleSort('os')">
+                                {{ t('os') }} <span v-if="sortKey === 'os'">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+                            </th>
+                            <th class="p-4 border-b cursor-pointer hover:bg-gray-100" @click="toggleSort('version')">
+                                {{ t('version') }} <span v-if="sortKey === 'version'">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+                            </th>
+                            <th class="p-4 border-b cursor-pointer hover:bg-gray-100" @click="toggleSort('status')">
+                                {{ t('status') }} <span v-if="sortKey === 'status'">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+                            </th>
+                            <th class="p-4 border-b cursor-pointer hover:bg-gray-100" @click="toggleSort('started_at')">
+                                {{ t('startedAt') }} <span v-if="sortKey === 'started_at'">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+                            </th>
+                            <th class="p-4 border-b cursor-pointer hover:bg-gray-100" @click="toggleSort('last_seen')">
+                                {{ t('lastSeen') }} <span v-if="sortKey === 'last_seen'">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+                            </th>
                             <th class="p-4 border-b">{{ t('actions') }}</th>
                         </tr>
                     </thead>
@@ -232,6 +250,7 @@
                                 'bg-gray-100 text-gray-500': client.status === 'offline'
                             }">{{ t(client.status) }}</span>
                         </td>
+                        <td class="p-4 text-xs text-gray-500">{{ formatDate(client.started_at) }}</td>
                         <td class="p-4 text-xs text-gray-500">{{ formatDate(client.last_seen) }}</td>
                         <td class="p-4 flex gap-2">
                             <button @click="openHardware(client)" :disabled="client.status === 'offline'" :class="['px-2 py-1 rounded border whitespace-nowrap', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-green-600 hover:bg-green-100 border-green-200']">{{ t('hardware') }}</button>
@@ -241,7 +260,7 @@
                         </td>
                     </tr>
                     <tr v-if="filteredClients.length === 0">
-                        <td colspan="8" class="p-12 text-center text-gray-400 italic">{{ t('noClients') }}</td>
+                        <td colspan="9" class="p-12 text-center text-gray-400 italic">{{ t('noClients') }}</td>
                     </tr>
                 </tbody>
             </table>
@@ -1189,12 +1208,23 @@
                     }
                 }
 
-                // Dashboard Filter
+                // Dashboard Filter & Sort
                 const searchQuery = ref('')
                 const statusFilter = ref('all')
+                const sortKey = ref('started_at')
+                const sortOrder = ref('desc')
+
+                const toggleSort = (key) => {
+                    if (sortKey.value === key) {
+                        sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
+                    } else {
+                        sortKey.value = key
+                        sortOrder.value = 'desc' // Default to desc
+                    }
+                }
 
                 const filteredClients = computed(() => {
-                    return clients.value.filter(client => {
+                    let res = clients.value.filter(client => {
                         const q = searchQuery.value.toLowerCase()
                         const matchQuery = !q || 
                             (client.hostname && client.hostname.toLowerCase().includes(q)) ||
@@ -1205,6 +1235,18 @@
                         const matchStatus = statusFilter.value === 'all' || client.status === statusFilter.value
                         
                         return matchQuery && matchStatus
+                    })
+
+                    return res.sort((a, b) => {
+                        let valA = a[sortKey.value]
+                        let valB = b[sortKey.value]
+                        
+                        if (!valA) valA = ''
+                        if (!valB) valB = ''
+                        
+                        if (valA < valB) return sortOrder.value === 'asc' ? -1 : 1
+                        if (valA > valB) return sortOrder.value === 'asc' ? 1 : -1
+                        return 0
                     })
                 })
 
@@ -1296,6 +1338,7 @@
                         version: 'Version',
                         id: 'ID',
                         lastSeen: 'Last Seen',
+                        startedAt: 'Started At',
                         ips: 'IP List',
                         copy: 'Copy',
                         actions: 'Actions',
@@ -1476,6 +1519,7 @@
                         version: '版本',
                         id: 'ID',
                         lastSeen: '最后心跳',
+                        startedAt: '启动时间',
                         ips: 'IP地址列表',
                         copy: '复制',
                         actions: '操作',
@@ -3022,7 +3066,7 @@
 
                 return {
                     clients, serverInfo, activeModal, selectedClient, commandLoading,
-                    searchQuery, statusFilter, filteredClients,
+                    searchQuery, statusFilter, filteredClients, sortKey, sortOrder, toggleSort,
                     hardwareInfo, shellInput, shellOutput, shellFileInput, shellOutputRef, recommendedCommands, runRecommendedCommand,
                     currentShellDir, showShellHistory, shellHistory, selectHistoryCommand, runHistoryCommand,
                     currentPath, fileList, fileInput,
