@@ -32,6 +32,7 @@ hex = "0.4.3"
 rustls = { version = "0.23", features = ["ring"] }
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 rcgen = "0.14.7"
+tracing-appender = "0.2.4"
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.7"

@@ -65,12 +65,61 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Initialize tracing
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "server=debug,tower_http=debug".into()),
-        ))
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    let _guard = {
+        #[cfg(windows)]
+        if let Some(Commands::RunService) = &cli.command {
+            // Log to file when running as service
+            if let Ok(exe_path) = std::env::current_exe() {
+                if let Some(exe_dir) = exe_path.parent() {
+                    let file_appender = tracing_appender::rolling::daily(exe_dir, "roam-server.log");
+                    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+                    
+                    tracing_subscriber::registry()
+                        .with(tracing_subscriber::EnvFilter::new(
+                            std::env::var("RUST_LOG").unwrap_or_else(|_| "server=debug,tower_http=debug".into()),
+                        ))
+                        .with(tracing_subscriber::fmt::layer().with_writer(non_blocking).with_ansi(false))
+                        .init();
+                    Some(guard)
+                } else {
+                    tracing_subscriber::registry()
+                        .with(tracing_subscriber::EnvFilter::new(
+                            std::env::var("RUST_LOG").unwrap_or_else(|_| "server=debug,tower_http=debug".into()),
+                        ))
+                        .with(tracing_subscriber::fmt::layer())
+                        .init();
+                    None
+                }
+            } else {
+                tracing_subscriber::registry()
+                    .with(tracing_subscriber::EnvFilter::new(
+                        std::env::var("RUST_LOG").unwrap_or_else(|_| "server=debug,tower_http=debug".into()),
+                    ))
+                    .with(tracing_subscriber::fmt::layer())
+                    .init();
+                None
+            }
+        } else {
+            tracing_subscriber::registry()
+                .with(tracing_subscriber::EnvFilter::new(
+                    std::env::var("RUST_LOG").unwrap_or_else(|_| "server=debug,tower_http=debug".into()),
+                ))
+                .with(tracing_subscriber::fmt::layer())
+                .init();
+            None
+        }
+
+        #[cfg(not(windows))]
+        {
+            tracing_subscriber::registry()
+                .with(tracing_subscriber::EnvFilter::new(
+                    std::env::var("RUST_LOG").unwrap_or_else(|_| "server=debug,tower_http=debug".into()),
+                ))
+                .with(tracing_subscriber::fmt::layer())
+                .init();
+            None::<()>
+        }
+    };
 
     match cli.command {
         Some(Commands::Install) => return service::install_service(),

@@ -19,18 +19,34 @@ use crate::assets;
 
 pub async fn run() -> anyhow::Result<()> {
     // Load .env file
-    dotenvy::dotenv().ok();
-    
+    // 1. Prioritize loading from the directory of the executable (Service/Production behavior)
+    let mut env_loaded = false;
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
             let env_path = exe_dir.join(".env");
             if env_path.exists() {
-                 let _ = dotenvy::from_path(&env_path);
+                 if let Err(e) = dotenvy::from_path(&env_path) {
+                     tracing::warn!("Failed to load .env from executable directory: {}", e);
+                 } else {
+                     env_loaded = true;
+                 }
             }
         }
     }
     
-    let _ = dotenvy::from_filename("server/.env");
+    // 2. Fallback to current directory (Development behavior) if not loaded from exe dir
+    if !env_loaded {
+        if let Err(e) = dotenvy::dotenv() {
+            if !e.not_found() {
+                tracing::warn!("Failed to load .env from current directory: {}", e);
+            }
+        }
+    }
+    
+    // 3. Additional Development fallback (server/.env)
+    if !env_loaded {
+        let _ = dotenvy::from_filename("server/.env");
+    }
 
     // Load Config
     let config = ServerConfig::new()?;

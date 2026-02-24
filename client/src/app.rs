@@ -21,29 +21,33 @@ pub async fn run() -> anyhow::Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     // Load .env file
-    // 1. Try loading from current directory (standard behavior)
-    if let Err(e) = dotenvy::dotenv() {
-        if !e.not_found() {
-            warn!("Failed to load .env from current directory: {}", e);
-        }
-    }
-    
-    // 2. Try loading from the directory of the executable (service behavior fallback)
+    // 1. Prioritize loading from the directory of the executable (Service/Production behavior)
+    let mut env_loaded = false;
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
             let env_path = exe_dir.join(".env");
             if env_path.exists() {
                  if let Err(e) = dotenvy::from_path(&env_path) {
                      warn!("Failed to load .env from executable directory: {}", e);
+                 } else {
+                     env_loaded = true;
                  }
             }
         }
     }
-
-    // 3. Development fallback
-    if let Err(_e) = dotenvy::from_filename("client/.env") {
-         // Ignore dev fallback errors usually, but maybe warn if file exists?
-         // For dev, it's fine.
+    
+    // 2. Fallback to current directory (Development behavior) if not loaded from exe dir
+    if !env_loaded {
+        if let Err(e) = dotenvy::dotenv() {
+            if !e.not_found() {
+                warn!("Failed to load .env from current directory: {}", e);
+            }
+        }
+    }
+    
+    // 3. Additional Development fallback (client/.env)
+    if !env_loaded {
+        let _ = dotenvy::from_filename("client/.env");
     }
 
     // Initialize tracing if not already initialized

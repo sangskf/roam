@@ -10,9 +10,16 @@ pub fn install_service() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Failed to get executable directory"))?
         .to_path_buf();
 
-    // Copy .env, cert.pem, key.pem if they exist in current directory
+    // Copy .env, cert.pem, key.pem, server_config.toml/json if they exist in current directory
     let current_dir = std::env::current_dir()?;
-    let files_to_copy = vec![".env", "cert.pem", "key.pem"];
+    let files_to_copy = vec![
+        ".env", 
+        "cert.pem", 
+        "key.pem",
+        "server_config.toml",
+        "server_config.json",
+        "server_config.yaml"
+    ];
     
     for filename in files_to_copy {
         let src = current_dir.join(filename);

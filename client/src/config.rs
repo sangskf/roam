@@ -17,16 +17,32 @@ impl ClientConfig {
             .set_default("auth_token", "secret-token")?
             .set_default("heartbeat_interval_sec", 10)?
             .set_default("alias", None::<String>)?
-            .set_default("tls_insecure", false)?
-            .add_source(File::with_name("client_config").required(false));
+            .set_default("tls_insecure", false)?;
 
-        // Also try loading config from executable directory (for Windows Service)
+        // 1. Prioritize loading config from executable directory (Production/Service)
+        let mut config_found = false;
         if let Ok(exe_path) = std::env::current_exe() {
             if let Some(exe_dir) = exe_path.parent() {
                 let config_path = exe_dir.join("client_config");
-                // Don't duplicate if CWD is same as exe dir, but config-rs handles overrides fine
-                builder = builder.add_source(File::from(config_path).required(false));
+                if let Some(path_str) = config_path.to_str() {
+                    // This will look for client_config.toml, .json, etc. in exe_dir
+                    builder = builder.add_source(File::with_name(path_str).required(false));
+                    
+                    if exe_dir.join("client_config.toml").exists() || 
+                       exe_dir.join("client_config.json").exists() ||
+                       exe_dir.join("client_config.yaml").exists() {
+                        config_found = true;
+                    }
+                }
             }
+        }
+
+        // 2. Fallback to current working directory (Development) if not found in exe dir
+        // Or always add it with lower priority?
+        // User said: "runtime should use config file under binary directory".
+        // This implies if binary dir has config, use it. If not (dev), use CWD.
+        if !config_found {
+             builder = builder.add_source(File::with_name("client_config").required(false));
         }
 
         builder = builder.add_source(config::Environment::with_prefix("APP"));
