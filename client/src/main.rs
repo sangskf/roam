@@ -36,7 +36,12 @@ fn main() -> anyhow::Result<()> {
             // Log to file when running as service
             if let Ok(exe_path) = std::env::current_exe() {
                 if let Some(exe_dir) = exe_path.parent() {
-                    let file_appender = tracing_appender::rolling::daily(exe_dir, "roam-client.log");
+                    let log_dir = exe_dir.join("logs");
+                    if !log_dir.exists() {
+                        let _ = std::fs::create_dir(&log_dir);
+                    }
+                    
+                    let file_appender = tracing_appender::rolling::daily(log_dir, "roam-client.log");
                     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
                     
                     tracing_subscriber::fmt()
