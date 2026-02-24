@@ -16,7 +16,7 @@ use common::Message;
 use crate::config::ClientConfig;
 use crate::command_handler;
 
-pub async fn run() -> anyhow::Result<()> {
+pub async fn run(shutdown_signal: impl std::future::Future<Output = ()>) -> anyhow::Result<()> {
     // Install default crypto provider if not already installed
     let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -69,13 +69,22 @@ pub async fn run() -> anyhow::Result<()> {
         info!("Client alias: {}", alias);
     }
 
-    loop {
-        match connect_and_run(client_id, &hostname, &os, &version, &config).await {
-            Ok(_) => warn!("Connection closed, reconnecting..."),
-            Err(e) => error!("Connection error: {}, reconnecting in 5s...", e),
+    tokio::select! {
+        _ = async {
+            loop {
+                match connect_and_run(client_id, &hostname, &os, &version, &config).await {
+                    Ok(_) => warn!("Connection closed, reconnecting..."),
+                    Err(e) => error!("Connection error: {}, reconnecting in 5s...", e),
+                }
+                time::sleep(Duration::from_secs(5)).await;
+            }
+        } => {}
+        _ = shutdown_signal => {
+            info!("Shutdown signal received, exiting...");
         }
-        time::sleep(Duration::from_secs(5)).await;
     }
+    
+    Ok(())
 }
 
 fn get_or_create_client_id() -> anyhow::Result<Uuid> {

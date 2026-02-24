@@ -25,6 +25,16 @@ enum Commands {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
+    #[cfg(windows)]
+    if let Some(Commands::RunService) = &cli.command {
+        // Set working directory to executable directory for Windows Service
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let _ = std::env::set_current_dir(exe_dir);
+            }
+        }
+    }
+
     // Initialize tracing
     if std::env::var("RUST_LOG").is_err() {
         std::env::set_var("RUST_LOG", "info");
@@ -78,7 +88,9 @@ fn main() -> anyhow::Result<()> {
         Some(Commands::RunService) => return service::run_windows_service(),
         None => {
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(app::run())
+            rt.block_on(app::run(async {
+                tokio::signal::ctrl_c().await.ok();
+            }))
         }
     }
 }

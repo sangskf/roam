@@ -17,7 +17,7 @@ use crate::db;
 use crate::handlers;
 use crate::assets;
 
-pub async fn run() -> anyhow::Result<()> {
+pub async fn run(shutdown_signal: impl std::future::Future<Output = ()> + Send + 'static) -> anyhow::Result<()> {
     // Load .env file
     // 1. Prioritize loading from the directory of the executable (Service/Production behavior)
     let mut env_loaded = false;
@@ -101,13 +101,27 @@ pub async fn run() -> anyhow::Result<()> {
         )
         .await?;
 
+        let handle = axum_server::Handle::new();
+        let shutdown_handle = handle.clone();
+        tokio::spawn(async move {
+            shutdown_signal.await;
+            tracing::info!("Shutdown signal received, initiating graceful shutdown...");
+            shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(10)));
+        });
+
         axum_server::bind_rustls(addr, tls_config)
+            .handle(handle)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
             .await?;
     } else {
         tracing::info!("TLS disabled. Using plain TCP.");
         let listener = TcpListener::bind(addr).await?;
-        axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
+        axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
+            .with_graceful_shutdown(async move {
+                shutdown_signal.await;
+                tracing::info!("Shutdown signal received, initiating graceful shutdown...");
+            })
+            .await?;
     }
 
     Ok(())

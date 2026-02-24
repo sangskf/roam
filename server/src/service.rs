@@ -121,12 +121,15 @@ fn run_service_logic() -> anyhow::Result<()> {
     };
     use std::time::Duration;
 
+    // Create a channel for shutdown signal
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::unbounded_channel();
+
     let event_handler = move |control_event| -> ServiceControlHandlerResult {
         match control_event {
             ServiceControl::Stop => {
                 // Signal stop
-                // For now, we can just exit process as it's simple
-                std::process::exit(0);
+                let _ = shutdown_tx.send(());
+                ServiceControlHandlerResult::NoError
             }
             ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
             _ => ServiceControlHandlerResult::NotImplemented,
@@ -147,7 +150,9 @@ fn run_service_logic() -> anyhow::Result<()> {
 
     let rt = tokio::runtime::Runtime::new()?;
     // This blocks until app::run returns (or process exits via stop handler)
-    let result = rt.block_on(crate::app::run());
+    let result = rt.block_on(crate::app::run(async move {
+        let _ = shutdown_rx.recv().await;
+    }));
 
     status_handle.set_service_status(ServiceStatus {
         service_type: ServiceType::OWN_PROCESS,

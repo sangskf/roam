@@ -66,6 +66,30 @@ impl ServerConfig {
             }
         }
 
+        // Fix TLS paths if they are relative and exist in the executable directory
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                if let Some(path_str) = &server_config.tls_cert_path {
+                    let path = std::path::Path::new(path_str);
+                    if !path.is_absolute() {
+                        let abs_path = exe_dir.join(path);
+                        if abs_path.exists() {
+                            server_config.tls_cert_path = Some(abs_path.to_string_lossy().to_string());
+                        }
+                    }
+                }
+                if let Some(path_str) = &server_config.tls_key_path {
+                    let path = std::path::Path::new(path_str);
+                    if !path.is_absolute() {
+                        let abs_path = exe_dir.join(path);
+                        if abs_path.exists() {
+                            server_config.tls_key_path = Some(abs_path.to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+        }
+
         // Auto-detect certificates if not configured (check exe dir too)
         if server_config.tls_cert_path.is_none() && server_config.tls_key_path.is_none() {
             // Check current dir
