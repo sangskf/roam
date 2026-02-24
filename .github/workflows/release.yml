@@ -20,18 +20,18 @@ jobs:
     strategy:
       matrix:
         platform:
-#          - os: ubuntu-latest
-#            name: linux-x86_64
-#            target: x86_64-unknown-linux-gnu
-#            ext: ""
+          - os: ubuntu-latest
+            name: linux-x86_64
+            target: x86_64-unknown-linux-gnu
+            ext: ""
           - os: windows-latest
             name: windows-x86_64
             target: x86_64-pc-windows-msvc
             ext: ".exe"
-#          - os: macos-latest
-#            name: macos-x86_64
-#            target: x86_64-apple-darwin
-#            ext: ""
+          - os: macos-latest
+            name: macos-x86_64
+            target: x86_64-apple-darwin
+            ext: ""
 
     steps:
       - uses: actions/checkout@v4

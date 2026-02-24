@@ -22,20 +22,29 @@ pub async fn run() -> anyhow::Result<()> {
 
     // Load .env file
     // 1. Try loading from current directory (standard behavior)
-    dotenvy::dotenv().ok();
+    if let Err(e) = dotenvy::dotenv() {
+        if !e.not_found() {
+            warn!("Failed to load .env from current directory: {}", e);
+        }
+    }
     
     // 2. Try loading from the directory of the executable (service behavior fallback)
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
             let env_path = exe_dir.join(".env");
             if env_path.exists() {
-                 let _ = dotenvy::from_path(&env_path);
+                 if let Err(e) = dotenvy::from_path(&env_path) {
+                     warn!("Failed to load .env from executable directory: {}", e);
+                 }
             }
         }
     }
 
     // 3. Development fallback
-    let _ = dotenvy::from_filename("client/.env");
+    if let Err(_e) = dotenvy::from_filename("client/.env") {
+         // Ignore dev fallback errors usually, but maybe warn if file exists?
+         // For dev, it's fine.
+    }
 
     // Initialize tracing if not already initialized
     // Note: tracing subscriber should ideally be init in main, but here is also ok if single entry
