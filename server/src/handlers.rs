@@ -820,10 +820,11 @@ pub struct ClientSummary {
     pub status: String,
     pub last_seen: Option<String>,
     pub started_at: Option<String>,
+    pub remark: Option<String>,
 }
 
 pub async fn list_clients(State(state): State<Arc<AppState>>) -> Json<Vec<ClientSummary>> {
-    let rows = sqlx::query("SELECT id, hostname, os, alias, ip, ips, version, status, last_seen, started_at FROM clients ORDER BY last_seen DESC")
+    let rows = sqlx::query("SELECT id, hostname, os, alias, ip, ips, version, status, last_seen, started_at, remark FROM clients ORDER BY last_seen DESC")
         .fetch_all(&state.db)
         .await
         .unwrap_or_default();
@@ -842,6 +843,7 @@ pub async fn list_clients(State(state): State<Arc<AppState>>) -> Json<Vec<Client
         let _db_status: String = r.get("status");
         let db_last_seen: Option<chrono::NaiveDateTime> = r.get("last_seen");
         let db_started_at: Option<chrono::NaiveDateTime> = r.get("started_at");
+        let db_remark: Option<String> = r.get("remark");
         
         let last_seen = db_last_seen.map(|d| format!("{}Z", d.format("%Y-%m-%dT%H:%M:%S")));
         let parsed_db_ips: Vec<String> = db_ips.as_deref().and_then(|s| serde_json::from_str(s).ok()).unwrap_or_default();
@@ -894,9 +896,34 @@ pub async fn list_clients(State(state): State<Arc<AppState>>) -> Json<Vec<Client
             status,
             last_seen,
             started_at,
+            remark: db_remark,
         }
     }).collect();
     Json(clients)
+}
+
+// API: Update Client Remark
+#[derive(serde::Deserialize)]
+pub struct UpdateClientRemarkRequest {
+    pub remark: String,
+}
+
+pub async fn update_client_remark(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<UpdateClientRemarkRequest>,
+) -> impl IntoResponse {
+    let id_str = id.to_string();
+    let remark = &payload.remark;
+    
+    if let Err(e) = sqlx::query("UPDATE clients SET remark = ? WHERE id = ?")
+        .bind(remark)
+        .bind(id_str)
+        .execute(&state.db).await {
+         return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to update client remark: {}", e)).into_response();
+    }
+    
+    (StatusCode::OK, "Client remark updated").into_response()
 }
 
 // API: Delete Client (Remove from DB and disconnect)

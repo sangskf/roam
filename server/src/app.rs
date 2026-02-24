@@ -62,6 +62,7 @@ pub async fn run(shutdown_signal: impl std::future::Future<Output = ()> + Send +
     let app = Router::new()
         .route("/api/clients", get(handlers::list_clients))
         .route("/api/clients/:id", axum::routing::delete(handlers::delete_client))
+        .route("/api/clients/:id/remark", axum::routing::put(handlers::update_client_remark))
         .route("/api/info", get(handlers::get_server_info))
         .route("/api/clients/:id/command", post(handlers::send_command))
         .route("/api/commands/:id/result", get(handlers::get_command_result))

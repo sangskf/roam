@@ -146,7 +146,7 @@ async fn connect_and_run(client_id: Uuid, hostname: &str, os: &str, version: &st
         alias: config.alias.clone(),
         version: version.to_string(),
         ips,
-        started_at: Some(chrono::Utc::now()),
+        started_at: Some(get_now()),
     };
     write.send(WsMessage::Text(serde_json::to_string(&register_msg)?)).await?;
 
@@ -263,4 +263,59 @@ impl ServerCertVerifier for NoCertificateVerification {
             rustls::SignatureScheme::ED25519,
         ]
     }
+}
+
+#[cfg(target_os = "windows")]
+fn get_now() -> chrono::DateTime<chrono::Utc> {
+    use std::sync::Once;
+    static START: Once = Once::new();
+    static mut HAS_PRECISE_TIME: bool = false;
+
+    unsafe {
+        START.call_once(|| {
+            use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
+            
+            // Check if GetSystemTimePreciseAsFileTime exists in kernel32.dll
+            let kernel32 = GetModuleHandleA(b"kernel32.dll\0".as_ptr());
+            if kernel32 != 0 {
+                let proc = GetProcAddress(kernel32, b"GetSystemTimePreciseAsFileTime\0".as_ptr());
+                if proc.is_some() {
+                    HAS_PRECISE_TIME = true;
+                }
+            }
+        });
+
+        if HAS_PRECISE_TIME {
+            chrono::Utc::now()
+        } else {
+            // Fallback for Windows 7 and older: use GetSystemTimeAsFileTime
+            use windows_sys::Win32::System::Time::GetSystemTimeAsFileTime;
+            use windows_sys::Win32::Foundation::FILETIME;
+            
+            let mut ft: FILETIME = std::mem::zeroed();
+            GetSystemTimeAsFileTime(&mut ft);
+            
+            // FILETIME is 100ns intervals since Jan 1, 1601 UTC
+            let ticks = ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64);
+            
+            // Unix epoch (1970-01-01) is 11644473600 seconds after 1601-01-01
+            // 11644473600 * 10,000,000 = 116444736000000000 ticks
+            const UNIX_EPOCH_TICKS: u64 = 116444736000000000;
+            
+            let (seconds, nanos) = if ticks >= UNIX_EPOCH_TICKS {
+                let diff = ticks - UNIX_EPOCH_TICKS;
+                ((diff / 10_000_000) as i64, ((diff % 10_000_000) * 100) as u32)
+            } else {
+                // Before 1970, fallback to epoch
+                (0, 0)
+            };
+            
+            chrono::DateTime::from_timestamp(seconds, nanos).unwrap_or_default()
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn get_now() -> chrono::DateTime<chrono::Utc> {
+    chrono::Utc::now()
 }

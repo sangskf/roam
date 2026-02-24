@@ -177,6 +177,7 @@
                             <div>
                                 <div class="font-bold text-lg">{{ client.hostname }}</div>
                                 <div class="text-sm text-gray-500">{{ client.alias || '-' }}</div>
+                                <div v-if="client.remark" class="text-xs text-gray-500 mt-1" :title="client.remark">📝 {{ client.remark }}</div>
                             </div>
                             <span :class="{'px-2 py-1 rounded text-xs font-bold': true, 
                                 'bg-green-100 text-green-700': client.status === 'online',
@@ -231,6 +232,9 @@
                             <th class="p-4 border-b cursor-pointer hover:bg-gray-100" @click="toggleSort('last_seen')">
                                 {{ t('lastSeen') }} <span v-if="sortKey === 'last_seen'">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
                             </th>
+                            <th class="p-4 border-b cursor-pointer hover:bg-gray-100" @click="toggleSort('remark')">
+                                {{ t('remark') }} <span v-if="sortKey === 'remark'">{{ sortOrder === 'asc' ? '↑' : '↓' }}</span>
+                            </th>
                             <th class="p-4 border-b">{{ t('actions') }}</th>
                         </tr>
                     </thead>
@@ -252,6 +256,12 @@
                         </td>
                         <td class="p-4 text-xs text-gray-500">{{ formatDate(client.started_at) }}</td>
                         <td class="p-4 text-xs text-gray-500">{{ formatDate(client.last_seen) }}</td>
+                        <td class="p-4 group">
+                            <div class="flex items-center gap-2">
+                                <span class="truncate max-w-[150px]" :title="client.remark">{{ client.remark || '-' }}</span>
+                                <button @click="editRemark(client)" class="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-blue-600 transition-opacity">✎</button>
+                            </div>
+                        </td>
                         <td class="p-4 flex gap-2">
                             <button @click="openHardware(client)" :disabled="client.status === 'offline'" :class="['px-2 py-1 rounded border whitespace-nowrap', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-green-600 hover:bg-green-100 border-green-200']">{{ t('hardware') }}</button>
                             <button @click="openShell(client)" :disabled="client.status === 'offline'" :class="['px-2 py-1 rounded border whitespace-nowrap', client.status === 'offline' ? 'text-gray-400 border-gray-200 cursor-not-allowed' : 'text-gray-700 hover:bg-gray-100 border-gray-300']">{{ t('shell') }}</button>
@@ -1060,6 +1070,23 @@
             </div>
         </div>
 
+        <!-- Remark Modal -->
+        <div v-if="showRemarkModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-lg w-full max-w-sm p-6">
+                <h3 class="text-xl font-bold mb-4">{{ t('editRemark') }}</h3>
+                <form @submit.prevent="saveRemark">
+                    <div class="mb-4">
+                        <label class="block text-gray-700 text-sm font-bold mb-2">{{ t('remark') }}</label>
+                        <input v-model="remarkForm.remark" class="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none" :placeholder="t('remarkPlaceholder')">
+                    </div>
+                    <div class="flex justify-end gap-2">
+                        <button type="button" @click="showRemarkModal = false" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded">{{ t('cancel') }}</button>
+                        <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">{{ t('save') }}</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
         <!-- Password Modal -->
         <div v-if="showPasswordModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div class="bg-white rounded-lg shadow-lg w-full max-w-sm p-6">
@@ -1208,6 +1235,41 @@
                     }
                 }
 
+                // Remark Logic
+                const showRemarkModal = ref(false)
+                const remarkForm = ref({ id: '', remark: '' })
+
+                const editRemark = (client) => {
+                    remarkForm.value = {
+                        id: client.id,
+                        remark: client.remark || ''
+                    }
+                    showRemarkModal.value = true
+                }
+
+                const saveRemark = async () => {
+                    try {
+                        const res = await apiFetch(`/api/clients/${remarkForm.value.id}/remark`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ remark: remarkForm.value.remark })
+                        })
+                        
+                        if (res.ok) {
+                            const client = clients.value.find(c => c.id === remarkForm.value.id)
+                            if (client) {
+                                client.remark = remarkForm.value.remark
+                            }
+                            showRemarkModal.value = false
+                        } else {
+                            const txt = await res.text()
+                            alert('Failed to update remark: ' + txt)
+                        }
+                    } catch (e) {
+                        alert(e.message)
+                    }
+                }
+
                 // Dashboard Filter & Sort
                 const searchQuery = ref('')
                 const statusFilter = ref('all')
@@ -1339,6 +1401,9 @@
                         id: 'ID',
                         lastSeen: 'Last Seen',
                         startedAt: 'Started At',
+                        remark: 'Remark',
+                        editRemark: 'Edit Remark',
+                        remarkPlaceholder: 'Enter remark...',
                         ips: 'IP List',
                         copy: 'Copy',
                         actions: 'Actions',
@@ -1520,6 +1585,9 @@
                         id: 'ID',
                         lastSeen: '最后心跳',
                         startedAt: '启动时间',
+                        remark: '备注',
+                        editRemark: '编辑备注',
+                        remarkPlaceholder: '输入备注...',
                         ips: 'IP地址列表',
                         copy: '复制',
                         actions: '操作',
@@ -3089,7 +3157,9 @@
                     currentLogItem, downloadLogFile, downloadArtifact,
                     // Auth exports
                     authEnabled, isLoggedIn, username, loginForm, passwordForm, showPasswordModal,
-                    login, logout, changePassword
+                    login, logout, changePassword,
+                    // Remark exports
+                    showRemarkModal, remarkForm, editRemark, saveRemark
                 }
             }
         }).mount('#app')
