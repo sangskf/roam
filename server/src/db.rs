@@ -95,6 +95,7 @@ pub async fn init_db(db_url: &str) -> anyhow::Result<Pool<Sqlite>> {
     let _ = sqlx::query("ALTER TABLE clients ADD COLUMN ips TEXT").execute(&pool).await;
     let _ = sqlx::query("ALTER TABLE clients ADD COLUMN started_at DATETIME").execute(&pool).await;
     let _ = sqlx::query("ALTER TABLE clients ADD COLUMN remark TEXT").execute(&pool).await;
+    let _ = sqlx::query("ALTER TABLE clients ADD COLUMN working_directory TEXT").execute(&pool).await;
 
     // Seed admin user if not exists
     // Use runtime query to avoid compile-time check failure on fresh db

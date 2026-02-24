@@ -821,10 +821,11 @@ pub struct ClientSummary {
     pub last_seen: Option<String>,
     pub started_at: Option<String>,
     pub remark: Option<String>,
+    pub working_directory: Option<String>,
 }
 
 pub async fn list_clients(State(state): State<Arc<AppState>>) -> Json<Vec<ClientSummary>> {
-    let rows = sqlx::query("SELECT id, hostname, os, alias, ip, ips, version, status, last_seen, started_at, remark FROM clients ORDER BY last_seen DESC")
+    let rows = sqlx::query("SELECT id, hostname, os, alias, ip, ips, version, status, last_seen, started_at, remark, working_directory FROM clients ORDER BY last_seen DESC")
         .fetch_all(&state.db)
         .await
         .unwrap_or_default();
@@ -844,6 +845,7 @@ pub async fn list_clients(State(state): State<Arc<AppState>>) -> Json<Vec<Client
         let db_last_seen: Option<chrono::NaiveDateTime> = r.get("last_seen");
         let db_started_at: Option<chrono::NaiveDateTime> = r.get("started_at");
         let db_remark: Option<String> = r.get("remark");
+        let db_working_directory: Option<String> = r.get("working_directory");
         
         let last_seen = db_last_seen.map(|d| format!("{}Z", d.format("%Y-%m-%dT%H:%M:%S")));
         let parsed_db_ips: Vec<String> = db_ips.as_deref().and_then(|s| serde_json::from_str(s).ok()).unwrap_or_default();
@@ -897,6 +899,7 @@ pub async fn list_clients(State(state): State<Arc<AppState>>) -> Json<Vec<Client
             last_seen,
             started_at,
             remark: db_remark,
+            working_directory: db_working_directory,
         }
     }).collect();
     Json(clients)
@@ -924,6 +927,30 @@ pub async fn update_client_remark(
     }
     
     (StatusCode::OK, "Client remark updated").into_response()
+}
+
+// API: Update Client Working Directory
+#[derive(serde::Deserialize)]
+pub struct UpdateClientCwdRequest {
+    pub working_directory: String,
+}
+
+pub async fn update_client_working_directory(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<UpdateClientCwdRequest>,
+) -> impl IntoResponse {
+    let id_str = id.to_string();
+    let cwd = &payload.working_directory;
+    
+    if let Err(e) = sqlx::query("UPDATE clients SET working_directory = ? WHERE id = ?")
+        .bind(cwd)
+        .bind(id_str)
+        .execute(&state.db).await {
+         return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to update client working directory: {}", e)).into_response();
+    }
+    
+    (StatusCode::OK, "Client working directory updated").into_response()
 }
 
 // API: Delete Client (Remove from DB and disconnect)

@@ -107,7 +107,13 @@ pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool) -> CommandR
             // Trim command just in case
             let cmd_trimmed = cmd.trim();
             
-            if cmd_trimmed == "cd" {
+            let is_cd = if cfg!(target_os = "windows") {
+                cmd_trimmed.eq_ignore_ascii_case("cd")
+            } else {
+                cmd_trimmed == "cd"
+            };
+            
+            if is_cd {
                 let default_path = if cfg!(target_os = "windows") {
                     std::env::var("USERPROFILE").unwrap_or("C:\\".to_string())
                 } else {

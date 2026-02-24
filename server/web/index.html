@@ -175,7 +175,10 @@
                     <div v-for="client in filteredClients" :key="client.id" class="p-4 border-b last:border-b-0">
                         <div class="flex justify-between items-start mb-2">
                             <div>
-                                <div class="font-bold text-lg">{{ client.hostname }}</div>
+                                <div class="font-bold text-lg flex items-center gap-2">
+                                    {{ client.hostname }}
+                                    <button @click="editClient(client)" class="text-gray-400 hover:text-blue-600 text-sm">✎</button>
+                                </div>
                                 <div class="text-sm text-gray-500">{{ client.alias || '-' }}</div>
                                 <div v-if="client.remark" class="text-xs text-gray-500 mt-1" :title="client.remark">📝 {{ client.remark }}</div>
                             </div>
@@ -259,7 +262,7 @@
                         <td class="p-4 group">
                             <div class="flex items-center gap-2">
                                 <span class="truncate max-w-[150px]" :title="client.remark">{{ client.remark || '-' }}</span>
-                                <button @click="editRemark(client)" class="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-blue-600 transition-opacity">✎</button>
+                                <button @click="editClient(client)" class="text-gray-400 hover:text-blue-600 transition-colors">✎</button>
                             </div>
                         </td>
                         <td class="p-4 flex gap-2">
@@ -490,6 +493,9 @@
                         <h3 class="font-bold text-lg">{{ t('remoteShell') }}: {{ selectedClient?.hostname }}</h3>
                         <div v-if="currentShellDir" class="text-sm font-mono text-blue-600 flex items-center gap-1 mt-1">
                             <span>📂</span> {{ currentShellDir }}
+                            <button @click="setAsDefaultCwd" class="ml-2 text-xs bg-gray-200 hover:bg-gray-300 text-gray-700 px-2 py-0.5 rounded transition-colors" :title="t('setAsDefaultCwd')">
+                                {{ t('setAsDefault') }}
+                            </button>
                         </div>
                     </div>
                     <div class="flex items-center gap-2">
@@ -1070,17 +1076,17 @@
             </div>
         </div>
 
-        <!-- Remark Modal -->
-        <div v-if="showRemarkModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <!-- Client Edit Modal -->
+        <div v-if="showClientModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div class="bg-white rounded-lg shadow-lg w-full max-w-sm p-6">
-                <h3 class="text-xl font-bold mb-4">{{ t('editRemark') }}</h3>
-                <form @submit.prevent="saveRemark">
+                <h3 class="text-xl font-bold mb-4">{{ t('editClient') }}</h3>
+                <form @submit.prevent="saveClient">
                     <div class="mb-4">
                         <label class="block text-gray-700 text-sm font-bold mb-2">{{ t('remark') }}</label>
-                        <input v-model="remarkForm.remark" class="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none" :placeholder="t('remarkPlaceholder')">
+                        <input v-model="clientForm.remark" class="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none" :placeholder="t('remarkPlaceholder')">
                     </div>
                     <div class="flex justify-end gap-2">
-                        <button type="button" @click="showRemarkModal = false" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded">{{ t('cancel') }}</button>
+                        <button type="button" @click="showClientModal = false" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded">{{ t('cancel') }}</button>
                         <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">{{ t('save') }}</button>
                     </div>
                 </form>
@@ -1236,39 +1242,37 @@
                 }
 
                 // Remark Logic
-                const showRemarkModal = ref(false)
-                const remarkForm = ref({ id: '', remark: '' })
+                const showClientModal = ref(false)
+        const clientForm = ref({ id: '', remark: '' })
 
-                const editRemark = (client) => {
-                    remarkForm.value = {
-                        id: client.id,
-                        remark: client.remark || ''
-                    }
-                    showRemarkModal.value = true
-                }
+        const editClient = (client) => {
+            clientForm.value = {
+                id: client.id,
+                remark: client.remark || ''
+            }
+            showClientModal.value = true
+        }
 
-                const saveRemark = async () => {
-                    try {
-                        const res = await apiFetch(`/api/clients/${remarkForm.value.id}/remark`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ remark: remarkForm.value.remark })
-                        })
-                        
-                        if (res.ok) {
-                            const client = clients.value.find(c => c.id === remarkForm.value.id)
-                            if (client) {
-                                client.remark = remarkForm.value.remark
-                            }
-                            showRemarkModal.value = false
-                        } else {
-                            const txt = await res.text()
-                            alert('Failed to update remark: ' + txt)
-                        }
-                    } catch (e) {
-                        alert(e.message)
-                    }
+        const saveClient = async () => {
+            try {
+                // Update Remark
+                const res1 = await apiFetch(`/api/clients/${clientForm.value.id}/remark`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ remark: clientForm.value.remark })
+                })
+                if (!res1.ok) throw new Error(await res1.text())
+
+                // Update local state
+                const client = clients.value.find(c => c.id === clientForm.value.id)
+                if (client) {
+                    client.remark = clientForm.value.remark
                 }
+                showClientModal.value = false
+            } catch (e) {
+                alert('Failed to update client: ' + e.message)
+            }
+        }
 
                 // Dashboard Filter & Sort
                 const searchQuery = ref('')
@@ -1404,6 +1408,14 @@
                         remark: 'Remark',
                         editRemark: 'Edit Remark',
                         remarkPlaceholder: 'Enter remark...',
+                        workingDirectory: 'Working Directory',
+                        workingDirectoryPlaceholder: 'Enter absolute path...',
+                        workingDirectoryHint: 'Default directory for new shell sessions',
+                        setAsDefaultCwd: 'Set as Default CWD',
+                        setAsDefault: 'Set Default',
+                        confirmSetDefaultCwd: 'Set this directory as default for new sessions?',
+                        defaultCwdUpdated: 'Default working directory updated',
+                        editClient: 'Edit Client',
                         ips: 'IP List',
                         copy: 'Copy',
                         actions: 'Actions',
@@ -1588,6 +1600,14 @@
                         remark: '备注',
                         editRemark: '编辑备注',
                         remarkPlaceholder: '输入备注...',
+                        workingDirectory: '工作目录',
+                        workingDirectoryPlaceholder: '请输入绝对路径...',
+                        workingDirectoryHint: '新终端会话的默认目录',
+                        setAsDefaultCwd: '设为默认工作目录',
+                        setAsDefault: '设为默认',
+                        confirmSetDefaultCwd: '是否将此目录设为新会话的默认目录？',
+                        defaultCwdUpdated: '默认工作目录已更新',
+                        editClient: '编辑客户端',
                         ips: 'IP地址列表',
                         copy: '复制',
                         actions: '操作',
@@ -1957,15 +1977,26 @@
                     isMaximized.value = false
                     currentShellDir.value = ''
                     
-                    // Probe CWD silently
+                    // Probe CWD or set default
                     try {
-                        const probeCmd = client.os === 'windows' ? 'cd' : 'pwd'
-                        const result = await sendCommand(client.id, { 
-                            cmd_type: 'ShellExec', 
-                            args: { cmd: probeCmd, args: [] } 
-                        })
-                        if (result && result.status === 'ShellOutput' && result.data.cwd) {
-                            currentShellDir.value = result.data.cwd
+                        if (client.working_directory) {
+                             const result = await sendCommand(client.id, { 
+                                cmd_type: 'ShellExec', 
+                                args: { cmd: 'cd', args: [client.working_directory] } 
+                            })
+                            if (result && result.status === 'ShellOutput' && result.data.cwd) {
+                                currentShellDir.value = result.data.cwd
+                                shellOutput.value += `> cd ${client.working_directory}\n` // Show initial cd
+                            }
+                        } else {
+                            const probeCmd = client.os === 'windows' ? 'cd' : 'pwd'
+                            const result = await sendCommand(client.id, { 
+                                cmd_type: 'ShellExec', 
+                                args: { cmd: probeCmd, args: [] } 
+                            })
+                            if (result && result.status === 'ShellOutput' && result.data.cwd) {
+                                currentShellDir.value = result.data.cwd
+                            }
                         }
                     } catch (e) {
                         console.error('Failed to probe CWD', e)
@@ -2151,6 +2182,29 @@
                     }
                 }
 
+                const setAsDefaultCwd = async () => {
+                    if (!selectedClient.value || !currentShellDir.value) return
+                    if (!confirm(t('confirmSetDefaultCwd') + ' ' + currentShellDir.value)) return
+
+                    try {
+                        const res = await apiFetch(`/api/clients/${selectedClient.value.id}/working_directory`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ working_directory: currentShellDir.value })
+                        })
+                        if (!res.ok) throw new Error(await res.text())
+                        
+                        // Update local state
+                        const client = clients.value.find(c => c.id === selectedClient.value.id)
+                        if (client) {
+                            client.working_directory = currentShellDir.value
+                        }
+                        alert(t('defaultCwdUpdated'))
+                    } catch (e) {
+                        alert('Failed to update default directory: ' + e.message)
+                    }
+                }
+
                 const triggerShellUpload = () => {
                     shellFileInput.value.click()
                 }
@@ -2196,9 +2250,9 @@
                     selectedClient.value = client
                     activeModal.value = 'files'
                     
-                    // Determine initial path based on OS
-                    let initialPath = '~' // Default for Linux/macOS
-                    if (client.os && client.os.toLowerCase().includes('windows')) {
+                    // Determine initial path: prioritized client.working_directory
+                    let initialPath = client.working_directory || '~'
+                    if (!client.working_directory && client.os && client.os.toLowerCase().includes('windows')) {
                         initialPath = 'C:\\'
                     }
                     
@@ -3158,8 +3212,9 @@
                     // Auth exports
                     authEnabled, isLoggedIn, username, loginForm, passwordForm, showPasswordModal,
                     login, logout, changePassword,
-                    // Remark exports
-                    showRemarkModal, remarkForm, editRemark, saveRemark
+                    // Client Edit exports
+                    showClientModal, clientForm, editClient, saveClient,
+                    setAsDefaultCwd
                 }
             }
         }).mount('#app')
