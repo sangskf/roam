@@ -26,13 +26,43 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Initialize tracing
-    // Note: For Windows service, stdout might not be visible.
-    // Ideally we should log to a file or Event Log.
-    // But for now, we keep standard initialization.
     if std::env::var("RUST_LOG").is_err() {
         std::env::set_var("RUST_LOG", "info");
     }
-    tracing_subscriber::fmt::init();
+
+    let _guard = {
+        #[cfg(windows)]
+        if let Some(Commands::RunService) = &cli.command {
+            // Log to file when running as service
+            if let Ok(exe_path) = std::env::current_exe() {
+                if let Some(exe_dir) = exe_path.parent() {
+                    let file_appender = tracing_appender::rolling::daily(exe_dir, "roam-client.log");
+                    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+                    
+                    tracing_subscriber::fmt()
+                        .with_writer(non_blocking)
+                        .with_ansi(false)
+                        .init();
+                    Some(guard)
+                } else {
+                    tracing_subscriber::fmt::init();
+                    None
+                }
+            } else {
+                tracing_subscriber::fmt::init();
+                None
+            }
+        } else {
+            tracing_subscriber::fmt::init();
+            None
+        }
+
+        #[cfg(not(windows))]
+        {
+            tracing_subscriber::fmt::init();
+            None::<()> // No guard needed for stdout
+        }
+    };
 
     match cli.command {
         Some(Commands::Install) => return service::install_service(),

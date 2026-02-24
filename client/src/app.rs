@@ -6,7 +6,7 @@ use std::time::Duration;
 use tokio::time;
 use tracing::{info, error, warn};
 use std::fs;
-use std::path::Path;
+// use std::path::Path;
 use std::sync::Arc;
 use rustls::client::danger::{ServerCertVerifier, ServerCertVerified, HandshakeSignatureValid};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -75,16 +75,22 @@ pub async fn run() -> anyhow::Result<()> {
 }
 
 fn get_or_create_client_id() -> anyhow::Result<Uuid> {
-    let path = Path::new(".client_id");
+    // Use executable directory for storage to ensure it works in Service mode
+    let mut path = std::env::current_exe()?
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get executable directory"))?
+        .to_path_buf();
+    path.push(".client_id");
+
     if path.exists() {
-        let content = fs::read_to_string(path)?;
+        let content = fs::read_to_string(&path)?;
         if let Ok(uuid) = Uuid::parse_str(content.trim()) {
             return Ok(uuid);
         }
     }
     
     let new_uuid = Uuid::new_v4();
-    fs::write(path, new_uuid.to_string())?;
+    fs::write(&path, new_uuid.to_string())?;
     Ok(new_uuid)
 }
 
