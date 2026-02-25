@@ -136,7 +136,6 @@ fn run_service_logic() -> anyhow::Result<()> {
         },
         service_control_handler::{self, ServiceControlHandlerResult},
     };
-    use std::time::Duration;
 
     // Create a channel for shutdown signal
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::unbounded_channel();

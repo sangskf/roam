@@ -289,7 +289,7 @@ fn get_now() -> chrono::DateTime<chrono::Utc> {
             chrono::Utc::now()
         } else {
             // Fallback for Windows 7 and older: use GetSystemTimeAsFileTime
-            use windows_sys::Win32::System::Time::GetSystemTimeAsFileTime;
+            use windows_sys::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
             use windows_sys::Win32::Foundation::FILETIME;
             
             let mut ft: FILETIME = std::mem::zeroed();
