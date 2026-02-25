@@ -489,21 +489,21 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
             progress.current_step = i + 1;
         }
         
-        let scheme = if state.config.tls_cert_path.is_some() { "https" } else { "http" };
+        let base_url = get_download_base_url(&state, Some(client_id), Some(&server_host));
 
         let cmd_payload_result = match step {
             ScriptStep::Shell { cmd, args } => Ok(CommandPayload::ShellExec { cmd: cmd.clone(), args: args.clone() }),
             ScriptStep::Upload { local_path, remote_path } => {
-                let download_url = format!("{}://{}/api/files/download/staging/{}", scheme, server_host, local_path);
+                let download_url = format!("{}/api/files/download/staging/{}", base_url, local_path);
                 Ok(CommandPayload::DownloadFile { url: download_url, dest_path: remote_path.clone() })
             },
             ScriptStep::Download { remote_path, browser_download } => {
                 let upload_id = Uuid::new_v4();
-                let upload_url = format!("{}://{}/api/files/client-upload/{}", scheme, server_host, upload_id);
+                let upload_url = format!("{}/api/files/client-upload/{}", base_url, upload_id);
                 
                 if browser_download.unwrap_or(false) {
                     let file_name = std::path::Path::new(remote_path).file_name().unwrap_or_default().to_string_lossy();
-                    let download_link = format!("{}://{}/api/files/download/client_data/{}/{}", scheme, server_host, upload_id, file_name);
+                    let download_link = format!("{}/api/files/download/client_data/{}/{}", base_url, upload_id, file_name);
                     let log_msg = format!("BROWSER_DOWNLOAD: {}", download_link);
                     logs.push(log_msg.clone());
                     if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
@@ -521,7 +521,7 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
                 
                 match zip_directory(&src_dir, &dst_zip) {
                     Ok(_) => {
-                        let download_url = format!("{}://{}/api/files/download/staging/{}", scheme, server_host, zip_name);
+                        let download_url = format!("{}/api/files/download/staging/{}", base_url, zip_name);
                         Ok(CommandPayload::DownloadAndUnzip { url: download_url, dest_path: remote_path.clone() })
                     },
                     Err(e) => Err(format!("Failed to zip directory: {}", e))
@@ -530,11 +530,11 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
             ScriptStep::DownloadDir { remote_path, browser_download } => {
                 let upload_id = Uuid::new_v4();
                 // Client will upload a zip file, server receives it as generic file upload
-                let upload_url = format!("{}://{}/api/files/client-upload/{}", scheme, server_host, upload_id);
+                let upload_url = format!("{}/api/files/client-upload/{}", base_url, upload_id);
                 
                 if browser_download.unwrap_or(false) {
                     let file_name = format!("{}.zip", std::path::Path::new(remote_path).file_name().unwrap_or_default().to_string_lossy());
-                    let download_link = format!("{}://{}/api/files/download/client_data/{}/{}", scheme, server_host, upload_id, file_name);
+                    let download_link = format!("{}/api/files/download/client_data/{}/{}", base_url, upload_id, file_name);
                     let log_msg = format!("BROWSER_DOWNLOAD: {}", download_link);
                     logs.push(log_msg.clone());
                     if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
@@ -750,13 +750,9 @@ pub async fn upload_file_admin(
         }
         
         // Construct download URL
-        let scheme = if state.config.tls_cert_path.is_some() { "https" } else { "http" };
-        let host = headers.get("host")
-            .and_then(|h| h.to_str().ok())
-            .map(|h| h.to_string())
-            .unwrap_or_else(|| format!("{}:{}", state.config.host, state.config.port));
-            
-        let url = format!("{}://{}/api/files/download/staging/{}", scheme, host, file_name);
+        let host_header = headers.get("host").and_then(|h| h.to_str().ok());
+        let base_url = get_download_base_url(&state, None, host_header);
+        let url = format!("{}/api/files/download/staging/{}", base_url, file_name);
         
         return (StatusCode::OK, Json(serde_json::json!({ "url": url }))).into_response();
     }
@@ -1147,20 +1143,18 @@ pub async fn trigger_update_clients(
             Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("DB Error: {}", e)).into_response(),
         };
 
-    let host = headers.get("host")
-        .and_then(|h| h.to_str().ok())
-        .map(|h| h.to_string())
-        .unwrap_or_else(|| format!("{}:{}", state.config.host, state.config.port));
-    // Note: We need to ensure we expose uploads/updates via ServeDir in main.rs
-    let download_url = format!("http://{}/api/files/download/updates/{}", host, update.filename);
-    
+    let host_header = headers.get("host").and_then(|h| h.to_str().ok());
+
     let mut count = 0;
     for client_id in payload.client_ids {
         if let Some(client) = state.clients.get(&client_id) {
+             let base_url = get_download_base_url(&state, Some(client_id), host_header);
+             let download_url = format!("{}/api/files/download/updates/{}", base_url, update.filename);
+             
              let cmd_id = Uuid::new_v4();
              let msg = Message::Command {
                 id: cmd_id,
-                cmd: CommandPayload::UpdateClient { url: download_url.clone() },
+                cmd: CommandPayload::UpdateClient { url: download_url },
             };
             let _ = client.tx.send(msg).await;
             count += 1;
@@ -1174,11 +1168,17 @@ pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state, addr))
+    let host = headers.get("host")
+        .and_then(|h| h.to_str().ok())
+        .map(|h| h.to_string())
+        .unwrap_or_else(|| format!("{}:{}", state.config.host, state.config.port));
+
+    ws.on_upgrade(move |socket| handle_socket(socket, state, addr, host))
 }
 
-async fn handle_socket(socket: WebSocket, state: Arc<AppState>, addr: SocketAddr) {
+async fn handle_socket(socket: WebSocket, state: Arc<AppState>, addr: SocketAddr, server_host: String) {
     let (mut sender, mut receiver) = socket.split();
 
     // Authenticate first
@@ -1268,6 +1268,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, addr: SocketAddr
         ips: ips.clone(),
         version: version.clone(),
         started_at,
+        server_host,
     });
 
     // Spawn task to send messages FROM channel TO websocket
@@ -1388,6 +1389,7 @@ pub async fn login(
     (StatusCode::UNAUTHORIZED, "Invalid credentials").into_response()
 }
 
+
 #[derive(serde::Deserialize)]
 pub struct ChangePasswordRequest {
     pub old_password: String,
@@ -1488,4 +1490,32 @@ pub async fn logout(
         
     state.web_sessions.remove(&token);
     (StatusCode::OK, "Logged out").into_response()
+}
+
+fn get_download_base_url(state: &AppState, client_id: Option<Uuid>, request_host: Option<&str>) -> String {
+    if let Some(prefix) = &state.config.download_url_prefix {
+        return if prefix.starts_with("http") {
+             prefix.trim_end_matches('/').to_string()
+        } else {
+             let scheme = if state.config.tls_cert_path.is_some() { "https" } else { "http" };
+             format!("{}://{}", scheme, prefix.trim_end_matches('/'))
+        };
+    }
+    
+    let scheme = if state.config.tls_cert_path.is_some() { "https" } else { "http" };
+
+    // Fallback to client's registration host if client_id provided
+    if let Some(cid) = client_id {
+        if let Some(c) = state.clients.get(&cid) {
+             return format!("{}://{}", scheme, c.server_host);
+        }
+    }
+    
+    // Fallback to request host
+    if let Some(host) = request_host {
+        return format!("{}://{}", scheme, host);
+    }
+    
+    // Fallback to config host
+    format!("{}://{}:{}", scheme, state.config.host, state.config.port)
 }

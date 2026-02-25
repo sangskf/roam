@@ -36,6 +36,7 @@ pub struct ClientConnection {
     pub ips: Vec<String>,
     pub version: String,
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub server_host: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

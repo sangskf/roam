@@ -11,6 +11,7 @@ pub struct ServerConfig {
     pub web_jwt_secret: String,
     pub tls_cert_path: Option<String>,
     pub tls_key_path: Option<String>,
+    pub download_url_prefix: Option<String>,
 }
 
 impl ServerConfig {
@@ -23,7 +24,8 @@ impl ServerConfig {
             .set_default("web_auth_enabled", true)?
             .set_default("web_jwt_secret", "roam-secret-key")?
             .set_default("tls_cert_path", None::<String>)?
-            .set_default("tls_key_path", None::<String>)?;
+            .set_default("tls_key_path", None::<String>)?
+            .set_default("download_url_prefix", None::<String>)?;
 
         // 1. Prioritize loading config from executable directory (Production/Service)
         let mut config_found = false;
