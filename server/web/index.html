@@ -774,18 +774,29 @@
                     </div>
                     
                     <p class="mb-2 text-sm text-gray-600 font-bold">{{ t('selectClients') }}</p>
-                    <div class="space-y-2">
-                        <label v-for="client in clients" :key="client.id" class="flex items-center p-2 hover:bg-gray-50 rounded cursor-pointer border">
-                            <input type="checkbox" :value="client.id" v-model="newGroup.client_ids" class="mr-3 h-4 w-4 text-blue-600">
-                            <div>
-                                <div class="font-medium text-sm">
-                                    {{ client.hostname }}
-                                    <span v-if="client.alias" class="text-gray-500 font-normal ml-1">({{ client.alias }})</span>
+                    <div class="mb-2 flex items-center gap-2">
+                         <input v-model="clientSelectionSearch" :placeholder="t('searchPlaceholder')" class="flex-1 border rounded px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                         <button @click="toggleSelectAllGroupClients" class="text-blue-600 hover:underline text-xs whitespace-nowrap">
+                            {{ areAllGroupSelected ? t('deselectAll') : t('selectAll') }}
+                         </button>
+                    </div>
+                    <div class="space-y-2 max-h-60 overflow-auto border p-2 rounded bg-gray-50">
+                        <label v-for="client in filteredSelectionClients" :key="client.id" class="flex items-center p-2 hover:bg-white rounded cursor-pointer border border-transparent hover:border-gray-200">
+                            <input type="checkbox" :value="client.id" v-model="newGroup.client_ids" class="mr-3 h-4 w-4 text-blue-600 shrink-0">
+                            <div class="flex-1 min-w-0">
+                                <div class="flex justify-between items-center">
+                                    <div class="font-medium text-sm truncate">
+                                        {{ client.hostname }}
+                                        <span v-if="client.alias" class="text-gray-500 font-normal ml-1">({{ client.alias }})</span>
+                                    </div>
+                                    <span :class="client.status === 'online' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'" class="text-xs px-1.5 py-0.5 rounded ml-2 shrink-0">
+                                        {{ client.status === 'online' ? t('online') : t('offline') }}
+                                    </span>
                                 </div>
-                                <div class="text-xs text-gray-500">{{ client.ip }}</div>
+                                <div v-if="client.remark" class="text-xs text-gray-500 truncate mt-0.5">{{ client.remark }}</div>
                             </div>
                         </label>
-                        <div v-if="clients.length === 0" class="text-center text-gray-400 py-4">{{ t('noClients') }}</div>
+                        <div v-if="filteredSelectionClients.length === 0" class="text-center text-gray-400 py-4">{{ t('noClients') }}</div>
                     </div>
                     
                     <div class="mt-4 mb-2">
@@ -912,18 +923,29 @@
                 </div>
                 <div class="p-6 max-h-[60vh] overflow-auto">
                     <p class="mb-4 text-sm text-gray-600">{{ t('selectClients') }}</p>
-                    <div class="space-y-2">
-                        <label v-for="client in clients" :key="client.id" class="flex items-center p-2 hover:bg-gray-50 rounded cursor-pointer border">
-                            <input type="checkbox" :value="client.id" v-model="selectedClientIds" class="mr-3 h-4 w-4 text-blue-600">
-                            <div>
-                                <div class="font-medium text-sm">
-                                    {{ client.hostname }}
-                                    <span v-if="client.alias" class="text-gray-500 font-normal ml-1">({{ client.alias }})</span>
+                    <div class="mb-2 flex items-center gap-2">
+                         <input v-model="clientSelectionSearch" :placeholder="t('searchPlaceholder')" class="flex-1 border rounded px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                         <button @click="toggleSelectAllRunClients" class="text-blue-600 hover:underline text-xs whitespace-nowrap">
+                            {{ areAllRunSelected ? t('deselectAll') : t('selectAll') }}
+                         </button>
+                    </div>
+                    <div class="space-y-2 max-h-60 overflow-auto border p-2 rounded bg-gray-50">
+                        <label v-for="client in filteredSelectionClients" :key="client.id" class="flex items-center p-2 hover:bg-white rounded cursor-pointer border border-transparent hover:border-gray-200">
+                            <input type="checkbox" :value="client.id" v-model="selectedClientIds" class="mr-3 h-4 w-4 text-blue-600 shrink-0">
+                            <div class="flex-1 min-w-0">
+                                <div class="flex justify-between items-center">
+                                    <div class="font-medium text-sm truncate">
+                                        {{ client.hostname }}
+                                        <span v-if="client.alias" class="text-gray-500 font-normal ml-1">({{ client.alias }})</span>
+                                    </div>
+                                    <span :class="client.status === 'online' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'" class="text-xs px-1.5 py-0.5 rounded ml-2 shrink-0">
+                                        {{ client.status === 'online' ? t('online') : t('offline') }}
+                                    </span>
                                 </div>
-                                <div class="text-xs text-gray-500">{{ client.ip }}</div>
+                                <div v-if="client.remark" class="text-xs text-gray-500 truncate mt-0.5">{{ client.remark }}</div>
                             </div>
                         </label>
-                        <div v-if="clients.length === 0" class="text-center text-gray-400 py-4">{{ t('noClients') }}</div>
+                        <div v-if="filteredSelectionClients.length === 0" class="text-center text-gray-400 py-4">{{ t('noClients') }}</div>
                     </div>
                 </div>
                 <div class="p-6 border-t flex justify-end gap-3">
@@ -1181,6 +1203,8 @@
         createApp({
             setup() {
                 const clients = ref([])
+                const allClients = ref([]) // For modals
+                const clientSelectionSearch = ref('')
                 const totalClients = ref(0)
                 const onlineCount = ref(0)
                 const offlineCount = ref(0)
@@ -1691,6 +1715,7 @@
                         riskShutdown: 'System shutdown',
                         riskReboot: 'System reboot',
                         selectAllOnline: 'Select All Online',
+                        selectAll: 'Select All',
                         deselectAll: 'Deselect All',
                         offlineClients: 'Offline Clients',
                         versionTooHigh: 'Version is already higher or equal',
@@ -1909,6 +1934,7 @@
                         riskShutdown: '系统关机',
                         riskReboot: '系统重启',
                         selectAllOnline: '全选在线',
+                        selectAll: '全选',
                         deselectAll: '取消全选',
                         offlineClients: '离线客户端',
                         versionTooHigh: '版本已是最新或更高',
@@ -2042,6 +2068,79 @@
                     }
                 }
 
+                const fetchAllClients = async () => {
+                    try {
+                        const res = await apiFetch('/api/clients?limit=10000') // Fetch all without status filter
+                        if (res.ok) {
+                            const data = await res.json()
+                            allClients.value = data.clients || []
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch all clients', e)
+                    }
+                }
+
+                const filteredSelectionClients = computed(() => {
+                    let list = [...allClients.value];
+                    
+                    // Filter by Search
+                    if (clientSelectionSearch.value) {
+                        const q = clientSelectionSearch.value.toLowerCase();
+                        list = list.filter(c => 
+                            (c.hostname && c.hostname.toLowerCase().includes(q)) ||
+                            (c.alias && c.alias.toLowerCase().includes(q)) ||
+                            (c.remark && c.remark.toLowerCase().includes(q))
+                        );
+                    }
+
+                    // Sort: Online first, then by Hostname
+                    return list.sort((a, b) => {
+                        const statusA = a.status === 'online' ? 0 : 1;
+                        const statusB = b.status === 'online' ? 0 : 1;
+                        if (statusA !== statusB) return statusA - statusB;
+                        
+                        const nameA = (a.hostname || '').toLowerCase();
+                        const nameB = (b.hostname || '').toLowerCase();
+                        return nameA.localeCompare(nameB);
+                    });
+                })
+ 
+                const areAllGroupSelected = computed(() => {
+                    const ids = filteredSelectionClients.value.map(c => c.id);
+                    if (ids.length === 0) return false;
+                    const set = new Set(newGroup.value.client_ids);
+                    return ids.every(id => set.has(id));
+                });
+ 
+                const toggleSelectAllGroupClients = () => {
+                    const ids = filteredSelectionClients.value.map(c => c.id);
+                    const set = new Set(newGroup.value.client_ids);
+                    if (areAllGroupSelected.value) {
+                        ids.forEach(id => set.delete(id));
+                    } else {
+                        ids.forEach(id => set.add(id));
+                    }
+                    newGroup.value.client_ids = Array.from(set);
+                };
+ 
+                const areAllRunSelected = computed(() => {
+                    const ids = filteredSelectionClients.value.map(c => c.id);
+                    if (ids.length === 0) return false;
+                    const set = new Set(selectedClientIds.value);
+                    return ids.every(id => set.has(id));
+                });
+ 
+                const toggleSelectAllRunClients = () => {
+                    const ids = filteredSelectionClients.value.map(c => c.id);
+                    const set = new Set(selectedClientIds.value);
+                    if (areAllRunSelected.value) {
+                        ids.forEach(id => set.delete(id));
+                    } else {
+                        ids.forEach(id => set.add(id));
+                    }
+                    selectedClientIds.value = Array.from(set);
+                };
+
                 const fetchServerInfo = async () => {
                     try {
                         const res = await apiFetch('/api/info')
@@ -2055,6 +2154,13 @@
 
                 // Polling for client list
                 setInterval(fetchClients, 5000)
+                // Also poll allClients if a modal is open, to keep selection list up-to-date
+                setInterval(() => {
+                    if (activeModal.value === 'groupEditor' || activeModal.value === 'runScript') {
+                        fetchAllClients()
+                    }
+                }, 5000)
+
                 onMounted(() => {
                     checkAuth()
                     // fetchClients() - will be handled by interval or after login
@@ -2807,6 +2913,8 @@
 
                 const openGroupEditor = (group = null) => {
                     activeModal.value = 'groupEditor'
+                    fetchAllClients() // Load all clients for selection
+                    clientSelectionSearch.value = ''
                     fetchScripts() // Ensure scripts are loaded
                     if (group) {
                         isCreatingGroup.value = false
@@ -3018,6 +3126,8 @@
                     selectedScript.value = script
                     selectedClientIds.value = []
                     activeModal.value = 'runScript'
+                    fetchAllClients() // Load all clients for selection
+                    clientSelectionSearch.value = ''
                 }
 
                 const runScriptAction = async () => {
@@ -3551,6 +3661,9 @@
                     selectedClientIds, currentView, fetchScripts,
                     updateList, selectedUpdate, newUpdate, updateFileInput, fetchUpdates, openUploadUpdateModal, uploadUpdate, deleteUpdate, openDeployUpdate, triggerDeploy, selectAllOnlineClients,
                     filteredDeployClients, deploySearchQuery, canUpdateClient,
+                    clientSelectionSearch, filteredSelectionClients,
+                    areAllGroupSelected, toggleSelectAllGroupClients,
+                    areAllRunSelected, toggleSelectAllRunClients,
                     closeModal, formatBytes, navigateUp, joinPath,
                     isMaximized, toggleMaximize, isMenuOpen, toggleMenu,
                     t, toggleLang, lang, formatDate,

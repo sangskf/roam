@@ -1476,7 +1476,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, addr: SocketAddr
                             Message::Heartbeat => {
                                 // Update last seen in DB
                                 let client_id_str = client_id.to_string();
-                                let _ = sqlx::query("UPDATE clients SET last_seen = CURRENT_TIMESTAMP WHERE id = ?")
+                                let _ = sqlx::query("UPDATE clients SET last_seen = CURRENT_TIMESTAMP, status = 'connected' WHERE id = ?")
                                     .bind(&client_id_str)
                                     .execute(&state.db).await;
                             }
@@ -1495,8 +1495,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, addr: SocketAddr
             // Cleanup
             state.clients.remove(&client_id);
             let client_id_str = client_id.to_string();
-            let _ = sqlx::query("UPDATE clients SET status = ? WHERE id = ?")
-                .bind("disconnected")
+            let _ = sqlx::query("UPDATE clients SET status = 'disconnected' WHERE id = ?")
                 .bind(&client_id_str)
                 .execute(&state.db).await;
             info!("Client disconnected: {}", client_id);
