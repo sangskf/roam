@@ -65,6 +65,7 @@ pub async fn init_db(db_url: &str) -> anyhow::Result<Pool<Sqlite>> {
         CREATE TABLE IF NOT EXISTS group_scripts (
             group_id TEXT NOT NULL,
             script_id TEXT NOT NULL,
+            sort_order INTEGER DEFAULT 0,
             PRIMARY KEY (group_id, script_id),
             FOREIGN KEY(group_id) REFERENCES client_groups(id) ON DELETE CASCADE,
             FOREIGN KEY(script_id) REFERENCES scripts(id) ON DELETE CASCADE
@@ -96,6 +97,7 @@ pub async fn init_db(db_url: &str) -> anyhow::Result<Pool<Sqlite>> {
     let _ = sqlx::query("ALTER TABLE clients ADD COLUMN started_at DATETIME").execute(&pool).await;
     let _ = sqlx::query("ALTER TABLE clients ADD COLUMN remark TEXT").execute(&pool).await;
     let _ = sqlx::query("ALTER TABLE clients ADD COLUMN working_directory TEXT").execute(&pool).await;
+    let _ = sqlx::query("ALTER TABLE group_scripts ADD COLUMN sort_order INTEGER DEFAULT 0").execute(&pool).await;
 
     // Seed admin user if not exists
     // Use runtime query to avoid compile-time check failure on fresh db
@@ -185,6 +187,40 @@ pub async fn init_db(db_url: &str) -> anyhow::Result<Pool<Sqlite>> {
             "Example: Deploy Config",
             steps3
         ).execute(&pool).await;
+
+        // 4. Example: Download File from Server
+        let steps4 = serde_json::json!([
+            {
+                "type": "Upload", // Server uploads to client = Client downloads
+                "payload": { 
+                    "local_path": "example.txt", 
+                    "remote_path": "/tmp/example.txt" 
+                }
+            }
+        ]).to_string();
+
+        let id4 = uuid::Uuid::new_v4().to_string();
+        let _ = sqlx::query!(
+            "INSERT INTO scripts (id, name, steps) VALUES (?, ?, ?)",
+            id4,
+            "Example: Download File from Server",
+            steps4
+        ).execute(&pool).await;
+
+        // Create example group
+        let group_id = uuid::Uuid::new_v4().to_string();
+        let _ = sqlx::query!(
+            "INSERT INTO client_groups (id, name) VALUES (?, ?)",
+            group_id,
+            "Example Group"
+        ).execute(&pool).await;
+
+        // Link script to group
+        let _ = sqlx::query("INSERT INTO group_scripts (group_id, script_id, sort_order) VALUES (?, ?, ?)")
+            .bind(group_id)
+            .bind(id4)
+            .bind(1)
+            .execute(&pool).await;
     }
 
     Ok(pool)

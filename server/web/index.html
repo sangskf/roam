@@ -684,6 +684,7 @@
                             <tr>
                                 <th class="p-2 text-left">{{ t('name') }}</th>
                                 <th class="p-2 text-right">{{ t('size') }}</th>
+                                <th class="p-2 text-right">{{ t('lastModified') }}</th>
                                 <th class="p-2 text-center">{{ t('type') }}</th>
                                 <th class="p-2 text-right">{{ t('action') }}</th>
                             </tr>
@@ -696,6 +697,7 @@
                                     {{ file.name }}
                                 </td>
                                 <td class="p-2 text-right font-mono">{{ file.is_dir ? '-' : formatBytes(file.size) }}</td>
+                                <td class="p-2 text-right text-xs text-gray-500">{{ file.modified ? formatDate(new Date(file.modified * 1000)) : '-' }}</td>
                                 <td class="p-2 text-center text-xs text-gray-500">{{ file.is_dir ? 'DIR' : 'FILE' }}</td>
                                 <td class="p-2 text-right">
                                     <button v-if="!file.is_dir" @click.stop="downloadFromClient(file)" class="text-blue-500 hover:underline text-xs bg-white border px-2 py-0.5 rounded shadow-sm mr-2">{{ t('download') }}</button>
@@ -812,6 +814,9 @@
                                             <option value="Download">{{ t('downloadFile') }}</option>
                                             <option value="UploadDir">{{ t('uploadDir') }}</option>
                                             <option value="DownloadDir">{{ t('downloadDir') }}</option>
+                                            <option value="Copy">{{ t('copy') }}</option>
+                                            <option value="Move">{{ t('move') }}</option>
+                                            <option value="Delete">{{ t('delete') }}</option>
                                         </select>
                                     </div>
                                     <div class="flex-1">
@@ -849,7 +854,22 @@
                                                 {{ t('browserDownload') }}
                                             </label>
                                         </div>
+                                        <div v-if="step.type === 'Copy' || step.type === 'Move'">
+                                            <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('sourcePath') }}</label>
+                                            <input v-model="step.src_path" class="w-full border rounded px-2 py-1 text-sm mb-2" placeholder="/tmp/source.txt">
+                                            <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('destPath') }}</label>
+                                            <input v-model="step.dest_path" class="w-full border rounded px-2 py-1 text-sm" placeholder="/tmp/dest.txt">
+                                        </div>
+                                        <div v-if="step.type === 'Delete'">
+                                            <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('path') }}</label>
+                                            <input v-model="step.path" class="w-full border rounded px-2 py-1 text-sm" placeholder="/tmp/file_or_dir">
+                                        </div>
                                     </div>
+                                </div>
+                                <div class="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition">
+                                    <button @click="moveStep(index, 'up')" class="text-gray-400 hover:text-blue-500" :disabled="index === 0">↑</button>
+                                    <button @click="moveStep(index, 'down')" class="text-gray-400 hover:text-blue-500" :disabled="index === newScript.steps.length - 1">↓</button>
+                                    <button @click="removeStep(index)" class="text-gray-400 hover:text-red-500 ml-2">✕</button>
                                 </div>
                             </div>
                         </div>
@@ -1418,6 +1438,10 @@
                         editClient: 'Edit Client',
                         ips: 'IP List',
                         copy: 'Copy',
+                    move: 'Move',
+                    sourcePath: 'Source Path',
+                    destPath: 'Destination Path',
+                    path: 'Path',
                         actions: 'Actions',
                         noClients: 'No clients connected.',
                         hardware: 'Hardware',
@@ -1441,6 +1465,7 @@
                         uploadToClient: 'Upload to Client',
                         name: 'Name',
                         size: 'Size',
+                        lastModified: 'Last Modified',
                         type: 'Type',
                         action: 'Action',
                         download: 'Download',
@@ -1566,6 +1591,15 @@
                         cmdVer: 'System Version',
                         cmdDisk: 'Disk Usage',
                         cmdMem: 'Memory Usage',
+                        cmdMkdir: 'Create Directory',
+                        cmdRmdir: 'Remove Directory',
+                        cmdDel: 'Delete File',
+                        cmdCopy: 'Copy File',
+                        cmdMove: 'Move File',
+                        cmdRead: 'Read File',
+                        cmdWrite: 'Write File',
+                        cmdTouch: 'Create Empty File',
+                        cmdPwd: 'Print Working Directory',
                         commandHistory: 'Command History',
                         noHistory: 'No history available',
                         historyHint: 'Use Up/Down arrows to navigate history',
@@ -1610,6 +1644,10 @@
                         editClient: '编辑客户端',
                         ips: 'IP地址列表',
                         copy: '复制',
+                    move: '移动',
+                    sourcePath: '源路径',
+                    destPath: '目标路径',
+                    path: '路径',
                         actions: '操作',
                         noClients: '暂无客户端连接',
                         hardware: '硬件信息',
@@ -1633,6 +1671,7 @@
                         uploadToClient: '上传到客户端',
                         name: '名称',
                         size: '大小',
+                        lastModified: '最后修改时间',
                         type: '类型',
                         action: '操作',
                         download: '下载',
@@ -1763,6 +1802,15 @@
                         cmdVer: '系统版本',
                         cmdDisk: '磁盘使用',
                         cmdMem: '内存使用',
+                        cmdMkdir: '创建目录',
+                        cmdRmdir: '删除目录',
+                        cmdDel: '删除文件',
+                        cmdCopy: '复制文件',
+                        cmdMove: '移动文件',
+                        cmdRead: '读取文件',
+                        cmdWrite: '写入文件',
+                        cmdTouch: '创建空文件',
+                        cmdPwd: '当前路径',
                         dangerousCommandDetected: '检测到危险命令',
                         dangerousCommandMessage: '您尝试执行的命令匹配潜在的破坏性操作模式。',
                         warning: '警告',
@@ -1807,7 +1855,16 @@
                             { label: 'WhoAmI', command: 'whoami', desc: t('cmdWhoAmI') },
                             { label: 'Tasks', command: 'tasklist', desc: t('cmdTask') },
                             { label: 'Netstat', command: 'netstat -ano', desc: t('cmdNetstat') },
-                            { label: 'Ver', command: 'ver', desc: t('cmdVer') }
+                            { label: 'Ver', command: 'ver', desc: t('cmdVer') },
+                            // File Ops
+                            { label: 'Mkdir', command: 'mkdir new_folder', desc: t('cmdMkdir') },
+                            { label: 'Rmdir', command: 'rmdir /s /q folder_name', desc: t('cmdRmdir') },
+                            { label: 'Del', command: 'del filename', desc: t('cmdDel') },
+                            { label: 'Copy', command: 'copy source.txt dest.txt', desc: t('cmdCopy') },
+                            { label: 'Move', command: 'move source.txt dest.txt', desc: t('cmdMove') },
+                            { label: 'Read', command: 'type filename', desc: t('cmdRead') },
+                            { label: 'Write', command: 'echo "content" > filename', desc: t('cmdWrite') },
+                            { label: 'Pwd', command: 'cd', desc: t('cmdPwd') }
                         );
                     } else if (os.includes('macos') || os.includes('darwin')) {
                         commands.push(
@@ -1817,7 +1874,15 @@
                             { label: 'Uname', command: 'uname -a', desc: t('cmdVer') },
                             { label: 'WhoAmI', command: 'whoami', desc: t('cmdWhoAmI') },
                             { label: 'Top', command: 'top -l 1 | head -n 10', desc: t('cmdTask') },
-                            { label: 'Disk', command: 'df -h', desc: t('cmdDisk') }
+                            { label: 'Disk', command: 'df -h', desc: t('cmdDisk') },
+                            // File Ops
+                            { label: 'Mkdir', command: 'mkdir -p new_folder', desc: t('cmdMkdir') },
+                            { label: 'Rm', command: 'rm -rf folder_name', desc: t('cmdRmdir') },
+                            { label: 'Cp', command: 'cp -r source dest', desc: t('cmdCopy') },
+                            { label: 'Mv', command: 'mv source dest', desc: t('cmdMove') },
+                            { label: 'Cat', command: 'cat filename', desc: t('cmdRead') },
+                            { label: 'Touch', command: 'touch filename', desc: t('cmdTouch') },
+                            { label: 'Pwd', command: 'pwd', desc: t('cmdPwd') }
                         );
                     } else if (os.includes('linux')) {
                         commands.push(
@@ -1827,7 +1892,15 @@
                             { label: 'WhoAmI', command: 'whoami', desc: t('cmdWhoAmI') },
                             { label: 'Procs', command: 'ps aux | head -n 10', desc: t('cmdTask') },
                             { label: 'Disk', command: 'df -h', desc: t('cmdDisk') },
-                            { label: 'Mem', command: 'free -m', desc: t('cmdMem') }
+                            { label: 'Mem', command: 'free -m', desc: t('cmdMem') },
+                            // File Ops
+                            { label: 'Mkdir', command: 'mkdir -p new_folder', desc: t('cmdMkdir') },
+                            { label: 'Rm', command: 'rm -rf folder_name', desc: t('cmdRmdir') },
+                            { label: 'Cp', command: 'cp -r source dest', desc: t('cmdCopy') },
+                            { label: 'Mv', command: 'mv source dest', desc: t('cmdMove') },
+                            { label: 'Cat', command: 'cat filename', desc: t('cmdRead') },
+                            { label: 'Touch', command: 'touch filename', desc: t('cmdTouch') },
+                            { label: 'Pwd', command: 'pwd', desc: t('cmdPwd') }
                         );
                     } else {
                         // Generic Fallback
@@ -2720,6 +2793,18 @@
                     newScript.value.steps.splice(index, 1)
                 }
 
+                const moveStep = (index, direction) => {
+                    if (direction === 'up' && index > 0) {
+                        const temp = newScript.value.steps[index];
+                        newScript.value.steps[index] = newScript.value.steps[index - 1];
+                        newScript.value.steps[index - 1] = temp;
+                    } else if (direction === 'down' && index < newScript.value.steps.length - 1) {
+                        const temp = newScript.value.steps[index];
+                        newScript.value.steps[index] = newScript.value.steps[index + 1];
+                        newScript.value.steps[index + 1] = temp;
+                    }
+                }
+
                 const saveScript = async () => {
                     if (!newScript.value.name) return alert('Name required')
                     
@@ -3199,7 +3284,7 @@
                     openEditor, closeEditor, saveFile, editorFile, editorContent,
                     previewFile, previewUrl, previewType, previewContent, previewItems, docxContainer, previewLoading, openPreview, closePreview, openFileHandler,
                     openScripts, scriptList, selectedScript, isCreatingScript, newScript, scriptStatus,
-                    openScriptEditor, saveScript, addStep, removeStep, deleteScript, openRunScript, executeScript,
+                    openScriptEditor, saveScript, addStep, removeStep, moveStep, deleteScript, openRunScript, executeScript,
                     fetchGroups, groupList, selectedGroup, isCreatingGroup, newGroup, openGroupEditor, saveGroup, deleteGroup, runGroupScripts,
                     fetchHistory, historyList, viewLogs, selectedLogs, clearHistory,
                     executionList, viewingExecutionId, viewingExecution,

@@ -52,6 +52,9 @@ pub enum CommandPayload {
     DownloadAndUnzip { url: String, dest_path: String },
     // Zip directory at src_path and upload to upload_url
     ZipAndUpload { src_path: String, upload_url: String },
+    CopyFile { src_path: String, dest_path: String },
+    MoveFile { src_path: String, dest_path: String },
+    DeleteFile { path: String },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -71,6 +74,7 @@ pub struct FileInfo {
     pub name: String,
     pub is_dir: bool,
     pub size: u64,
+    pub modified: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

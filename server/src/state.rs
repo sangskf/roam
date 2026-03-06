@@ -54,6 +54,9 @@ pub enum ScriptStep {
     Download { remote_path: String, browser_download: Option<bool> },
     UploadDir { local_path: String, remote_path: String },
     DownloadDir { remote_path: String, browser_download: Option<bool> },
+    Copy { src_path: String, dest_path: String },
+    Move { src_path: String, dest_path: String },
+    Delete { path: String },
 }
 
 impl AppState {

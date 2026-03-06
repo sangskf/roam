@@ -1,5 +1,5 @@
 use axum::{
-    extract::{ws::{Message as WsMessage, WebSocket, WebSocketUpgrade}, State, Json, Path, ConnectInfo, Multipart},
+    extract::{ws::{Message as WsMessage, WebSocket, WebSocketUpgrade}, State, Json, Path, ConnectInfo, Multipart, Query},
     response::IntoResponse,
     http::{StatusCode, HeaderMap},
 };
@@ -65,13 +65,17 @@ pub async fn list_groups(State(state): State<Arc<AppState>>) -> Json<Vec<ClientG
             .map(|m| Uuid::parse_str(&m.client_id).unwrap_or_default())
             .collect();
             
-        let scripts = sqlx::query!("SELECT script_id FROM group_scripts WHERE group_id = ?", group_id_str)
+        let scripts = sqlx::query("SELECT script_id FROM group_scripts WHERE group_id = ? ORDER BY sort_order ASC")
+            .bind(group_id_str)
             .fetch_all(&state.db)
             .await
             .unwrap_or_default();
 
         let script_ids = scripts.into_iter()
-            .map(|s| Uuid::parse_str(&s.script_id).unwrap_or_default())
+            .map(|s| {
+                let id: String = s.get("script_id");
+                Uuid::parse_str(&id).unwrap_or_default()
+            })
             .collect();
             
         result.push(ClientGroup {
@@ -155,12 +159,13 @@ pub async fn update_group(
         if let Err(e) = sqlx::query!("DELETE FROM group_scripts WHERE group_id = ?", group_id_str).execute(&state.db).await {
             return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to clear scripts: {}", e)).into_response();
         }
-        for script_id in script_ids {
+        for (idx, script_id) in script_ids.iter().enumerate() {
             let script_id_str = script_id.to_string();
-            if let Err(e) = sqlx::query!(
-                "INSERT INTO group_scripts (group_id, script_id) VALUES (?, ?)",
-                group_id_str, script_id_str
-            ).execute(&state.db).await {
+            if let Err(e) = sqlx::query("INSERT INTO group_scripts (group_id, script_id, sort_order) VALUES (?, ?, ?)")
+                .bind(&group_id_str)
+                .bind(&script_id_str)
+                .bind(idx as i32)
+                .execute(&state.db).await {
                  error!("Failed to add script to group: {}", e);
             }
         }
@@ -196,7 +201,8 @@ pub async fn run_group_scripts(
     }
 
     // 2. Fetch Group Scripts
-    let scripts_rows = match sqlx::query!("SELECT script_id FROM group_scripts WHERE group_id = ?", group_id_str)
+    let scripts_rows = match sqlx::query("SELECT script_id FROM group_scripts WHERE group_id = ? ORDER BY sort_order ASC")
+        .bind(group_id_str)
         .fetch_all(&state.db)
         .await {
             Ok(s) => s,
@@ -209,7 +215,7 @@ pub async fn run_group_scripts(
 
     let mut scripts = Vec::new();
     for row in scripts_rows {
-        let script_id_str = row.script_id;
+        let script_id_str: String = row.get("script_id");
          let script_row = match sqlx::query!("SELECT id, name, steps FROM scripts WHERE id = ?", script_id_str)
             .fetch_optional(&state.db)
             .await {
@@ -543,6 +549,15 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
                 }
 
                 Ok(CommandPayload::ZipAndUpload { src_path: remote_path.clone(), upload_url })
+            },
+            ScriptStep::Copy { src_path, dest_path } => {
+                Ok(CommandPayload::CopyFile { src_path: src_path.clone(), dest_path: dest_path.clone() })
+            },
+            ScriptStep::Move { src_path, dest_path } => {
+                Ok(CommandPayload::MoveFile { src_path: src_path.clone(), dest_path: dest_path.clone() })
+            },
+            ScriptStep::Delete { path } => {
+                Ok(CommandPayload::DeleteFile { path: path.clone() })
             }
         };
         
@@ -552,6 +567,9 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
             ScriptStep::Download { remote_path, .. } => format!("Download: {}", remote_path),
             ScriptStep::UploadDir { local_path, remote_path } => format!("UploadDir: {} -> {}", local_path, remote_path),
             ScriptStep::DownloadDir { remote_path, .. } => format!("DownloadDir: {}", remote_path),
+            ScriptStep::Copy { src_path, dest_path } => format!("Copy: {} -> {}", src_path, dest_path),
+            ScriptStep::Move { src_path, dest_path } => format!("Move: {} -> {}", src_path, dest_path),
+            ScriptStep::Delete { path } => format!("Delete: {}", path),
         };
         
         let log_start = format!("Step {}: Started - {}", i + 1, step_desc);
@@ -804,6 +822,11 @@ pub async fn upload_file_client(
 
 
 // API: List connected clients
+#[derive(serde::Deserialize)]
+pub struct SearchParams {
+    pub q: Option<String>,
+}
+
 #[derive(serde::Serialize)]
 pub struct ClientSummary {
     pub id: Uuid,
@@ -820,13 +843,16 @@ pub struct ClientSummary {
     pub working_directory: Option<String>,
 }
 
-pub async fn list_clients(State(state): State<Arc<AppState>>) -> Json<Vec<ClientSummary>> {
+pub async fn list_clients(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SearchParams>
+) -> Json<Vec<ClientSummary>> {
     let rows = sqlx::query("SELECT id, hostname, os, alias, ip, ips, version, status, last_seen, started_at, remark, working_directory FROM clients ORDER BY last_seen DESC")
         .fetch_all(&state.db)
         .await
         .unwrap_or_default();
 
-    let clients = rows.into_iter().map(|r| {
+    let mut clients: Vec<ClientSummary> = rows.into_iter().map(|r| {
         let id_str: String = r.get("id");
         let id = Uuid::parse_str(&id_str).unwrap_or_default();
         let is_connected = state.clients.contains_key(&id);
@@ -898,6 +924,32 @@ pub async fn list_clients(State(state): State<Arc<AppState>>) -> Json<Vec<Client
             working_directory: db_working_directory,
         }
     }).collect();
+
+    // Filter
+    if let Some(q) = params.q {
+        let q = q.to_lowercase();
+        clients.retain(|c| {
+            c.hostname.to_lowercase().contains(&q) ||
+            c.alias.as_deref().unwrap_or("").to_lowercase().contains(&q) ||
+            c.ip.contains(&q) ||
+            c.ips.iter().any(|ip| ip.contains(&q))
+        });
+    }
+
+    // Sort: Online first, then Hostname ASC
+    clients.sort_by(|a, b| {
+        let status_order = |s: &str| match s {
+            "online" => 0,
+            _ => 1,
+        };
+        let sa = status_order(&a.status);
+        let sb = status_order(&b.status);
+        if sa != sb {
+            return sa.cmp(&sb);
+        }
+        a.hostname.cmp(&b.hostname)
+    });
+
     Json(clients)
 }
 
@@ -1091,15 +1143,13 @@ pub async fn upload_update(
                  return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create directory: {}", e)).into_response();
             }
             
-            // Avoid collisions? Or overwrite? 
-            // Let's prepend UUID or just use original name if unique enough.
-            // Or better: use UUID as filename on disk, keep original name in DB? 
-            // For simplicity, let's use original filename but user should be careful.
-            let path = format!("{}/{}", dir_path, file_name);
+            // Use unique filename to prevent overwriting history versions
+            let unique_filename = format!("{}_{}", Uuid::new_v4(), file_name);
+            let path = format!("{}/{}", dir_path, unique_filename);
             if let Err(e) = tokio::fs::write(&path, &data).await {
                  return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to write file: {}", e)).into_response();
             }
-            saved_filename = file_name;
+            saved_filename = unique_filename;
             file_saved = true;
         }
     }

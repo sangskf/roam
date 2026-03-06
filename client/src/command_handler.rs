@@ -246,10 +246,14 @@ pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool) -> CommandR
                              let metadata = entry.metadata().ok();
                              let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
                              let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+                             let modified = metadata.as_ref().and_then(|m| m.modified().ok())
+                                 .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs());
+
                              files.push(FileInfo {
                                  name: entry.file_name().to_string_lossy().to_string(),
                                  is_dir,
                                  size,
+                                 modified,
                              });
                          }
                      }
@@ -521,6 +525,75 @@ pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool) -> CommandR
                 }
                 Ok(Err(e)) => CommandResult::Error(format!("Failed to zip directory: {}", e)),
                 Err(e) => CommandResult::Error(format!("Join error: {}", e)),
+            }
+        }
+        CommandPayload::CopyFile { src_path, dest_path } => {
+            info!("Copying file from {} to {}", src_path, dest_path);
+            let src = PathBuf::from(&src_path);
+            let dest = PathBuf::from(&dest_path);
+            
+            if src.is_dir() {
+                 // Copy dir recursively? std::fs::copy is only for files.
+                 // For now, let's implement simple recursive copy or use fs_extra if available?
+                 // Since we want to keep dependencies low, let's just use walkdir/std::fs.
+                 // Or, if it's a directory, maybe we should return error "Copy directory not supported yet" or implement it.
+                 // Let's implement basic dir copy.
+                 
+                 // However, the command name is CopyFile. But user said "copy, move, delete files and folders".
+                 // So we should support folders.
+                 
+                 // Recursive copy function
+                 fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) -> std::io::Result<()> {
+                     if !dst.exists() {
+                         std::fs::create_dir_all(dst)?;
+                     }
+                     
+                     for entry in std::fs::read_dir(src)? {
+                         let entry = entry?;
+                         let ty = entry.file_type()?;
+                         let src_path = entry.path();
+                         let dst_path = dst.join(entry.file_name());
+                         
+                         if ty.is_dir() {
+                             copy_dir_recursive(&src_path, &dst_path)?;
+                         } else {
+                             std::fs::copy(&src_path, &dst_path)?;
+                         }
+                     }
+                     Ok(())
+                 }
+                 
+                 match copy_dir_recursive(&src, &dest) {
+                     Ok(_) => CommandResult::Success(format!("Directory copied from {} to {}", src_path, dest_path)),
+                     Err(e) => CommandResult::Error(format!("Failed to copy directory: {}", e)),
+                 }
+            } else {
+                match std::fs::copy(&src, &dest) {
+                    Ok(_) => CommandResult::Success(format!("File copied from {} to {}", src_path, dest_path)),
+                    Err(e) => CommandResult::Error(format!("Failed to copy file: {}", e)),
+                }
+            }
+        }
+        CommandPayload::MoveFile { src_path, dest_path } => {
+            info!("Moving file from {} to {}", src_path, dest_path);
+            match std::fs::rename(&src_path, &dest_path) {
+                Ok(_) => CommandResult::Success(format!("Moved from {} to {}", src_path, dest_path)),
+                Err(e) => CommandResult::Error(format!("Failed to move: {}", e)),
+            }
+        }
+        CommandPayload::DeleteFile { path } => {
+            info!("Deleting {}", path);
+            let p = PathBuf::from(&path);
+            if p.is_dir() {
+                match std::fs::remove_dir_all(&p) {
+                    Ok(_) => CommandResult::Success(format!("Directory deleted: {}", path)),
+                    Err(e) => CommandResult::Error(format!("Failed to delete directory: {}", e)),
+                }
+            } else {
+                match std::fs::remove_file(&p) {
+                    Ok(_) => CommandResult::Success(format!("File deleted: {}", path)),
+                    Err(e) => CommandResult::Error(format!("Failed to delete file: {}", e)),
+                }
             }
         }
     }
