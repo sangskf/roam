@@ -342,6 +342,7 @@
                         <h3 class="font-bold text-lg text-gray-800">{{ script.name }}</h3>
                         <div class="flex gap-1">
                             <button @click="openScriptEditor(script)" class="text-gray-500 hover:text-blue-600 p-1" title="Edit">✎</button>
+                            <button @click="copyScript(script)" class="text-gray-500 hover:text-indigo-600 p-1" :title="t('copy')">📄</button>
                             <button @click="deleteScript(script.id)" class="text-gray-500 hover:text-red-600 p-1" title="Delete">🗑</button>
                         </div>
                     </div>
@@ -1578,6 +1579,8 @@
                         scripts: 'Scripts',
                         scriptManager: 'Script Manager',
                         createScript: 'Create Script',
+                        scriptCopied: 'Script copied',
+                        scriptCopyFailed: 'Failed to copy script',
                         scriptName: 'Script Name',
                         steps: 'Steps',
                         addStep: 'Add Step',
@@ -1795,6 +1798,8 @@
                         scripts: '脚本组',
                         scriptManager: '脚本组管理',
                         createScript: '创建脚本组',
+                        scriptCopied: '脚本组已复制',
+                        scriptCopyFailed: '复制脚本组失败',
                         scriptName: '脚本名称',
                         steps: '步骤',
                         addStep: '添加步骤',
@@ -3121,6 +3126,32 @@
                         alert(e.message);
                     }
                 }
+                
+                const copyScript = async (script) => {
+                    if (!script) return
+                    const defaultName = lang.value === 'zh' ? `${script.name} 副本` : `${script.name} Copy`
+                    const name = prompt(t('scriptName'), defaultName)
+                    if (!name) return
+                    
+                    const payload = { name, steps: JSON.parse(JSON.stringify(script.steps || [])) }
+                    
+                    try {
+                        const res = await apiFetch('/api/scripts', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        })
+                        if (res.ok) {
+                            await fetchScripts()
+                            alert(t('scriptCopied'))
+                        } else {
+                            const txt = await res.text()
+                            alert((t('scriptCopyFailed') || 'Failed') + ': ' + txt)
+                        }
+                    } catch (e) {
+                        alert((t('scriptCopyFailed') || 'Failed') + ': ' + e.message)
+                    }
+                }
 
                 const openRunScript = (script) => {
                     selectedScript.value = script
@@ -3654,7 +3685,7 @@
                     openEditor, closeEditor, saveFile, editorFile, editorContent,
                     previewFile, previewUrl, previewType, previewContent, previewItems, docxContainer, previewLoading, openPreview, closePreview, openFileHandler,
                     openScripts, scriptList, selectedScript, isCreatingScript, newScript, scriptStatus,
-                    openScriptEditor, saveScript, addStep, removeStep, moveStep, deleteScript, openRunScript, executeScript,
+                    openScriptEditor, saveScript, addStep, removeStep, moveStep, deleteScript, copyScript, openRunScript, executeScript,
                     fetchGroups, groupList, selectedGroup, isCreatingGroup, newGroup, openGroupEditor, saveGroup, deleteGroup, runGroupScripts,
                     fetchHistory, historyList, viewLogs, selectedLogs, clearHistory,
                     executionList, viewingExecutionId, viewingExecution,

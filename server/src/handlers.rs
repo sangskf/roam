@@ -1206,17 +1206,20 @@ pub struct ClientUpdateItem {
 }
 
 pub async fn list_updates(State(state): State<Arc<AppState>>) -> Json<Vec<ClientUpdateItem>> {
-    let rows = sqlx::query!("SELECT id, version, filename, platform, CAST(uploaded_at AS TEXT) as uploaded_at FROM client_updates ORDER BY uploaded_at DESC")
+    let rows = sqlx::query("SELECT id, version, filename, platform, strftime('%Y-%m-%dT%H:%M:%SZ', uploaded_at) as uploaded_at FROM client_updates ORDER BY uploaded_at DESC")
         .fetch_all(&state.db)
         .await
         .unwrap_or_default();
     
-    let items = rows.into_iter().map(|r| ClientUpdateItem {
-        id: Uuid::parse_str(&r.id.unwrap_or_default()).unwrap_or_default(),
-        version: r.version,
-        filename: r.filename,
-        platform: r.platform,
-        uploaded_at: r.uploaded_at.unwrap_or_default(),
+    let items = rows.into_iter().map(|r| {
+        let id_str: String = r.get("id");
+        ClientUpdateItem {
+            id: Uuid::parse_str(&id_str).unwrap_or_default(),
+            version: r.get("version"),
+            filename: r.get("filename"),
+            platform: r.get("platform"),
+            uploaded_at: r.get::<Option<String>, _>("uploaded_at").unwrap_or_default(),
+        }
     }).collect();
     
     Json(items)
