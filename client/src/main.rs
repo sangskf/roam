@@ -41,6 +41,8 @@ fn main() -> anyhow::Result<()> {
     }
 
     let _guard = {
+        let timer = tracing_subscriber::fmt::time::ChronoLocal::new("%Y-%m-%d %H:%M:%S%.6f".to_string());
+
         #[cfg(windows)]
         if let Some(Commands::RunService) = &cli.command {
             // Log to file when running as service
@@ -57,24 +59,25 @@ fn main() -> anyhow::Result<()> {
                     tracing_subscriber::fmt()
                         .with_writer(non_blocking)
                         .with_ansi(false)
+                        .with_timer(timer.clone())
                         .init();
                     Some(guard)
                 } else {
-                    tracing_subscriber::fmt::init();
+                    tracing_subscriber::fmt().with_timer(timer.clone()).init();
                     None
                 }
             } else {
-                tracing_subscriber::fmt::init();
+                tracing_subscriber::fmt().with_timer(timer.clone()).init();
                 None
             }
         } else {
-            tracing_subscriber::fmt::init();
+            tracing_subscriber::fmt().with_timer(timer.clone()).init();
             None
         }
 
         #[cfg(not(windows))]
         {
-            tracing_subscriber::fmt::init();
+            tracing_subscriber::fmt().with_timer(timer.clone()).init();
             None::<()> // No guard needed for stdout
         }
     };

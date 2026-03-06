@@ -76,6 +76,8 @@ fn main() -> anyhow::Result<()> {
 
     // Initialize tracing
     let _guard = {
+        let timer = tracing_subscriber::fmt::time::ChronoLocal::new("%Y-%m-%d %H:%M:%S%.6f".to_string());
+
         // Log panics to tracing
         #[cfg(windows)]
         if let Some(Commands::RunService) = &cli.command {
@@ -101,7 +103,7 @@ fn main() -> anyhow::Result<()> {
                         .with(tracing_subscriber::EnvFilter::new(
                             std::env::var("RUST_LOG").unwrap_or_else(|_| "server=debug,tower_http=debug".into()),
                         ))
-                        .with(tracing_subscriber::fmt::layer().with_writer(non_blocking).with_ansi(false))
+                        .with(tracing_subscriber::fmt::layer().with_writer(non_blocking).with_ansi(false).with_timer(timer.clone()))
                         .init();
                     Some(guard)
                 } else {
@@ -109,7 +111,7 @@ fn main() -> anyhow::Result<()> {
                         .with(tracing_subscriber::EnvFilter::new(
                             std::env::var("RUST_LOG").unwrap_or_else(|_| "server=debug,tower_http=debug".into()),
                         ))
-                        .with(tracing_subscriber::fmt::layer())
+                        .with(tracing_subscriber::fmt::layer().with_timer(timer.clone()))
                         .init();
                     None
                 }
@@ -118,7 +120,7 @@ fn main() -> anyhow::Result<()> {
                     .with(tracing_subscriber::EnvFilter::new(
                         std::env::var("RUST_LOG").unwrap_or_else(|_| "server=debug,tower_http=debug".into()),
                     ))
-                    .with(tracing_subscriber::fmt::layer())
+                    .with(tracing_subscriber::fmt::layer().with_timer(timer.clone()))
                     .init();
                 None
             }
@@ -127,7 +129,7 @@ fn main() -> anyhow::Result<()> {
                 .with(tracing_subscriber::EnvFilter::new(
                     std::env::var("RUST_LOG").unwrap_or_else(|_| "server=debug,tower_http=debug".into()),
                 ))
-                .with(tracing_subscriber::fmt::layer())
+                .with(tracing_subscriber::fmt::layer().with_timer(timer.clone()))
                 .init();
             None
         }
@@ -138,7 +140,7 @@ fn main() -> anyhow::Result<()> {
                 .with(tracing_subscriber::EnvFilter::new(
                     std::env::var("RUST_LOG").unwrap_or_else(|_| "server=debug,tower_http=debug".into()),
                 ))
-                .with(tracing_subscriber::fmt::layer())
+                .with(tracing_subscriber::fmt::layer().with_timer(timer.clone()))
                 .init();
             None::<()>
         }

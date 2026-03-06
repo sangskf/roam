@@ -1185,7 +1185,7 @@
                 const onlineCount = ref(0)
                 const offlineCount = ref(0)
                 const currentPage = ref(1)
-                const pageSize = ref(50)
+                const pageSize = ref(10)
                 
                 const serverInfo = ref(null)
                 const currentView = ref('dashboard')
@@ -1381,6 +1381,12 @@
                         currentPage.value = 1; // Reset to page 1 on search
                         fetchClients();
                     }, 300);
+                });
+
+                // Watch status filter
+                watch(statusFilter, () => {
+                    currentPage.value = 1;
+                    fetchClients();
                 });
 
                 // Watch page changes
@@ -2009,11 +2015,15 @@
                 const fetchClients = async () => {
                     if (authEnabled.value && !isLoggedIn.value) return
                     try {
-                        const queryParams = new URLSearchParams({
+                        const params = {
                             q: searchQuery.value,
                             page: currentPage.value,
                             limit: pageSize.value
-                        });
+                        };
+                        if (statusFilter.value !== 'all') {
+                            params.status = statusFilter.value;
+                        }
+                        const queryParams = new URLSearchParams(params);
                         const res = await apiFetch(`/api/clients?${queryParams.toString()}`)
                         if (res.ok) {
                             const data = await res.json()
