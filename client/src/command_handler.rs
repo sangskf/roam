@@ -128,7 +128,7 @@ pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool) -> CommandR
                         stdout: String::new(),
                         stderr: String::new(),
                         exit_code: 0,
-                        cwd: target_path.to_string_lossy().to_string(),
+                        cwd: std::env::current_dir().unwrap_or_else(|_| target_path).to_string_lossy().to_string(),
                     },
                     Err(e) => CommandResult::ShellOutput {
                         stdout: String::new(),
