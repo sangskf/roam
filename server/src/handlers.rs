@@ -976,14 +976,14 @@ pub async fn list_clients(
     // DB Total - Memory Online = Offline.
     
     // Query Data
-    // Sort by status ASC (connected < disconnected) to put online clients first, then by last_seen DESC
+    // Sort by status ASC (connected < disconnected) to put online clients first, then by hostname ASC for stability
     // Note: status in DB is 'connected' or 'disconnected'.
     // If we want 'connected' first, 'connected' < 'disconnected', so ASC is correct.
     let query = format!(
         "SELECT id, hostname, os, alias, ip, ips, version, status, last_seen, started_at, remark, working_directory, display_ip 
          FROM clients 
          WHERE {} 
-         ORDER BY status ASC, last_seen DESC 
+         ORDER BY status ASC, hostname ASC 
          LIMIT ? OFFSET ?", 
         where_clause
     );
