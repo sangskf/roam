@@ -232,6 +232,8 @@ pub async fn run_group_scripts(
         });
     }
 
+    let scripts = Arc::new(scripts);
+
     // 3. Spawn Tasks
     for member in members {
         let client_id = Uuid::parse_str(&member.client_id).unwrap_or_default();
@@ -244,7 +246,7 @@ pub async fn run_group_scripts(
         let host_clone = host.clone();
         
         tokio::spawn(async move {
-            for script in scripts_clone {
+            for script in scripts_clone.iter().cloned() {
                 let history_id = Uuid::new_v4();
                 let history_id_str = history_id.to_string();
                 let script_id_str = script.id.to_string();
@@ -265,7 +267,7 @@ pub async fn run_group_scripts(
         });
     }
 
-    (StatusCode::OK, "Group execution started").into_response()
+    (StatusCode::ACCEPTED, "Group execution started").into_response()
 }
 
 // API: Get Active Executions
@@ -394,36 +396,45 @@ pub async fn run_script(
         steps,
     };
 
-    // For each client, create execution history and spawn task
-    for client_id in payload.client_ids {
-        if !state.clients.contains_key(&client_id) {
-            continue; // Skip offline/invalid clients
-        }
-        
-        let history_id = Uuid::new_v4();
-        let history_id_str = history_id.to_string();
-        let script_id_str_run = script_id.to_string();
-        let client_id_str = client_id.to_string();
-        
-        // Insert history record
-        let now_utc = chrono::Utc::now();
-        if let Err(e) = sqlx::query!(
-            "INSERT INTO execution_history (id, script_id, client_id, status, started_at) VALUES (?, ?, ?, ?, ?)",
-            history_id_str, script_id_str_run, client_id_str, "running", now_utc
-        ).execute(&state.db).await {
-            error!("Failed to create history record: {}", e);
-            continue;
-        }
+    let client_ids = payload.client_ids;
+    let state_clone = state.clone();
+    let script_clone = script.clone();
+    let host_clone = host.clone();
 
-        let state_clone = state.clone();
-        let script_clone = script.clone();
-        let host_clone = host.clone();
-        tokio::spawn(async move {
-            run_script_task(state_clone, client_id, script_clone, history_id, host_clone).await;
-        });
-    }
+    tokio::spawn(async move {
+        // Create history and dispatch in the background to avoid request timeouts when many clients are selected.
+        for client_id in client_ids {
+            if !state_clone.clients.contains_key(&client_id) {
+                continue;
+            }
 
-    (StatusCode::OK, "Script execution started on selected clients").into_response()
+            let history_id = Uuid::new_v4();
+            let history_id_str = history_id.to_string();
+            let script_id_str_run = script_clone.id.to_string();
+            let client_id_str = client_id.to_string();
+
+            let now_utc = chrono::Utc::now();
+            if let Err(e) = sqlx::query!(
+                "INSERT INTO execution_history (id, script_id, client_id, status, started_at) VALUES (?, ?, ?, ?, ?)",
+                history_id_str, script_id_str_run, client_id_str, "running", now_utc
+            )
+            .execute(&state_clone.db)
+            .await
+            {
+                error!("Failed to create history record: {}", e);
+                continue;
+            }
+
+            let state_task = state_clone.clone();
+            let script_task = script_clone.clone();
+            let host_task = host_clone.clone();
+            tokio::spawn(async move {
+                run_script_task(state_task, client_id, script_task, history_id, host_task).await;
+            });
+        }
+    });
+
+    (StatusCode::ACCEPTED, "Script execution started on selected clients").into_response()
 }
 
 use walkdir::WalkDir;
@@ -592,12 +603,15 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
         // Send command
         if let Some(client) = state.clients.get(&client_id) {
             let cmd_id = Uuid::new_v4();
+            let (wait_tx, wait_rx) = tokio::sync::oneshot::channel();
+            state.waiters.insert(cmd_id, wait_tx);
             let msg = Message::Command {
                 id: cmd_id,
                 cmd: cmd_payload,
             };
             
             if let Err(e) = client.tx.send(msg).await {
+                state.waiters.remove(&cmd_id);
                 let log_err = format!("Step {}: Failed to send command: {}", i + 1, e);
                 logs.push(log_err.clone());
                 if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
@@ -609,32 +623,37 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
             
             // Wait for result
             let mut step_success = false;
-            for _ in 0..60 { // Wait up to 30s
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                if let Some(result) = state.results.get(&cmd_id) {
-                     let log_res = match result.value() {
-                         CommandResult::Error(e) => {
-                             format!("Step {}: Failed: {}", i + 1, e)
-                         },
-                         CommandResult::ShellOutput { stdout, stderr, exit_code, .. } => {
-                            if *exit_code != 0 {
-                                format!("Step {}: Shell command failed (Exit Code: {}). Stderr: {}", i + 1, exit_code, stderr)
-                            } else {
-                                step_success = true;
-                                format!("Step {}: Completed. Output: {}", i + 1, stdout)
-                            }
-                        },
-                         res => {
-                             step_success = true;
-                             format!("Step {}: Completed. Result: {:?}", i + 1, res)
-                         }
-                     };
-                     
-                     logs.push(log_res.clone());
-                     if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
-                        progress.logs.push(log_res);
-                     }
-                     break;
+            let result = match tokio::time::timeout(tokio::time::Duration::from_secs(300), wait_rx).await {
+                Ok(Ok(r)) => Some(r),
+                Ok(Err(_)) => None,
+                Err(_) => {
+                    state.waiters.remove(&cmd_id);
+                    None
+                }
+            };
+
+            if let Some(result) = result {
+                let log_res = match result {
+                    CommandResult::Error(e) => {
+                        format!("Step {}: Failed: {}", i + 1, e)
+                    }
+                    CommandResult::ShellOutput { stdout, stderr, exit_code, .. } => {
+                        if exit_code != 0 {
+                            format!("Step {}: Shell command failed (Exit Code: {}). Stderr: {}", i + 1, exit_code, stderr)
+                        } else {
+                            step_success = true;
+                            format!("Step {}: Completed. Output: {}", i + 1, stdout)
+                        }
+                    }
+                    res => {
+                        step_success = true;
+                        format!("Step {}: Completed. Result: {:?}", i + 1, res)
+                    }
+                };
+
+                logs.push(log_res.clone());
+                if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
+                    progress.logs.push(log_res);
                 }
             }
             
@@ -690,44 +709,75 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
 #[derive(serde::Serialize)]
 pub struct ExecutionHistoryItem {
     pub id: Uuid,
+    pub script_id: Uuid,
+    pub client_id: Uuid,
     pub script_name: String,
     pub client_hostname: String,
+    pub client_alias: Option<String>,
     pub status: String,
     pub started_at: String,
     pub completed_at: Option<String>,
     pub logs: Vec<String>,
 }
 
+#[derive(serde::Serialize)]
+pub struct PaginatedHistory {
+    pub history: Vec<ExecutionHistoryItem>,
+    pub total: i64,
+}
+
+#[derive(serde::Deserialize)]
+pub struct HistoryParams {
+    pub page: Option<i64>,
+    pub limit: Option<i64>,
+}
+
 pub async fn get_script_history(
     State(state): State<Arc<AppState>>,
-) -> Json<Vec<ExecutionHistoryItem>> {
-    let rows = sqlx::query!(
+    Query(params): Query<HistoryParams>,
+) -> Json<PaginatedHistory> {
+    let page = params.page.unwrap_or(1).max(1);
+    let limit = params.limit.unwrap_or(50).max(1);
+    let offset = (page - 1) * limit;
+
+    let total = sqlx::query("SELECT COUNT(*) as count FROM execution_history")
+        .fetch_one(&state.db)
+        .await
+        .map(|r| r.try_get::<i64, _>("count").unwrap_or(0))
+        .unwrap_or(0);
+
+    let rows = sqlx::query(
         r#"
-        SELECT h.id, s.name as script_name, c.hostname as client_hostname, h.status, CAST(h.started_at AS TEXT) as started_at, CAST(h.completed_at AS TEXT) as completed_at, h.logs
+        SELECT h.id, h.script_id, h.client_id, s.name as script_name, c.hostname as client_hostname, c.alias as client_alias, h.status, CAST(h.started_at AS TEXT) as started_at, CAST(h.completed_at AS TEXT) as completed_at, h.logs
         FROM execution_history h
         JOIN scripts s ON h.script_id = s.id
         LEFT JOIN clients c ON h.client_id = c.id
         ORDER BY h.started_at DESC
-        LIMIT 50
-        "#
-    )
+        LIMIT ? OFFSET ?
+        "#)
+    .bind(limit)
+    .bind(offset)
     .fetch_all(&state.db)
     .await
     .unwrap_or_default();
 
-    let history = rows.into_iter().map(|r| {
-        let logs: Vec<String> = r.logs.as_deref().and_then(|l| serde_json::from_str(l).ok()).unwrap_or_default();
+    let history: Vec<ExecutionHistoryItem> = rows.into_iter().map(|r| {
+        let logs: Vec<String> = r.get::<Option<String>, _>("logs").as_deref().and_then(|l| serde_json::from_str(l).ok()).unwrap_or_default();
         ExecutionHistoryItem {
-            id: Uuid::parse_str(r.id.as_deref().unwrap_or("")).unwrap_or_default(),
-            script_name: r.script_name,
-            client_hostname: r.client_hostname.unwrap_or("Unknown".to_string()),
-            status: r.status,
-            started_at: r.started_at.unwrap_or_default(),
-            completed_at: r.completed_at,
+            id: Uuid::parse_str(r.get::<Option<String>, _>("id").as_deref().unwrap_or("")).unwrap_or_default(),
+            script_id: Uuid::parse_str(r.get::<Option<String>, _>("script_id").as_deref().unwrap_or("")).unwrap_or_default(),
+            client_id: Uuid::parse_str(r.get::<Option<String>, _>("client_id").as_deref().unwrap_or("")).unwrap_or_default(),
+            script_name: r.get("script_name"),
+            client_hostname: r.get::<Option<String>, _>("client_hostname").unwrap_or("Unknown".to_string()),
+            client_alias: r.get("client_alias"),
+            status: r.get("status"),
+            started_at: r.get::<Option<String>, _>("started_at").unwrap_or_default(),
+            completed_at: r.get("completed_at"),
             logs,
         }
     }).collect();
-    Json(history)
+    
+    Json(PaginatedHistory { history, total })
 }
 
 // API: Clear Execution History
@@ -746,35 +796,38 @@ pub async fn upload_file_admin(
     headers: HeaderMap,
     mut multipart: Multipart
 ) -> impl IntoResponse {
-    while let Some(field) = multipart.next_field().await.unwrap_or(None) {
-        let file_name = field.file_name().map(|s| s.to_string()).unwrap_or_else(|| "uploaded_file".to_string());
-        let data = match field.bytes().await {
-            Ok(d) => d,
-            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to read bytes: {}", e)).into_response(),
-        };
+    let field = match multipart.next_field().await.unwrap_or(None) {
+        Some(f) => f,
+        None => return (StatusCode::BAD_REQUEST, "No file provided").into_response(),
+    };
 
-        // Save to uploads/staging/
-        let dir_path = "uploads/staging";
-        if let Err(e) = tokio::fs::create_dir_all(dir_path).await {
-             return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create directory: {}", e)).into_response();
-        }
+    let file_name = field
+        .file_name()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "uploaded_file".to_string());
+    let data = match field.bytes().await {
+        Ok(d) => d,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to read bytes: {}", e)).into_response(),
+    };
 
-        let path = format!("{}/{}", dir_path, file_name);
-        if let Err(e) = File::create(&path).await {
-             return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create file: {}", e)).into_response();
-        }
-        if let Err(e) = tokio::fs::write(&path, &data).await {
-             return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to write file: {}", e)).into_response();
-        }
-        
-        // Construct download URL
-        let host_header = headers.get("host").and_then(|h| h.to_str().ok());
-        let base_url = get_download_base_url(&state, None, host_header);
-        let url = format!("{}/api/files/download/staging/{}", base_url, file_name);
-        
-        return (StatusCode::OK, Json(serde_json::json!({ "url": url }))).into_response();
+    let dir_path = "uploads/staging";
+    if let Err(e) = tokio::fs::create_dir_all(dir_path).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create directory: {}", e)).into_response();
     }
-    (StatusCode::BAD_REQUEST, "No file provided").into_response()
+
+    let path = format!("{}/{}", dir_path, file_name);
+    if let Err(e) = File::create(&path).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create file: {}", e)).into_response();
+    }
+    if let Err(e) = tokio::fs::write(&path, &data).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to write file: {}", e)).into_response();
+    }
+
+    let host_header = headers.get("host").and_then(|h| h.to_str().ok());
+    let base_url = get_download_base_url(&state, None, host_header);
+    let url = format!("{}/api/files/download/staging/{}", base_url, file_name);
+
+    (StatusCode::OK, Json(serde_json::json!({ "url": url }))).into_response()
 }
 
 // API: Client uploads file (Result of UploadFile command)
@@ -782,34 +835,31 @@ pub async fn upload_file_client(
     Path(id): Path<Uuid>, // Command ID
     mut multipart: Multipart
 ) -> impl IntoResponse {
-    while let Some(field) = multipart.next_field().await.unwrap_or(None) {
-        let file_name = field.file_name().map(|s| s.to_string()).unwrap_or_else(|| "client_upload".to_string());
-        let data = match field.bytes().await {
-            Ok(d) => d,
-            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to read bytes: {}", e)).into_response(),
-        };
+    let field = match multipart.next_field().await.unwrap_or(None) {
+        Some(f) => f,
+        None => return (StatusCode::BAD_REQUEST, "No file provided").into_response(),
+    };
 
-        // Save to uploads/client_data/<id>/
-        let dir_path = format!("uploads/client_data/{}", id);
-        if let Err(_) = tokio::fs::create_dir_all(&dir_path).await {
-             // ignore error if exists
-        }
-        
-        let file_path = format!("{}/{}", dir_path, file_name);
-         if let Err(e) = tokio::fs::write(&file_path, &data).await {
-             return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to write file: {}", e)).into_response();
-        }
-        
-        // Update the Command Result in State
-        // The client will also send a Response via WebSocket, but this confirms the file is here.
-        // We can optionally update the result here, but the WebSocket response is the source of truth for "Command Finished".
-        // However, we can store the file path in the result via the Response message.
-        
-        info!("File uploaded by client for command {}: {}", id, file_path);
-        
-        return (StatusCode::OK, "Upload successful").into_response();
+    let file_name = field
+        .file_name()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "client_upload".to_string());
+    let data = match field.bytes().await {
+        Ok(d) => d,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to read bytes: {}", e)).into_response(),
+    };
+
+    let dir_path = format!("uploads/client_data/{}", id);
+    let _ = tokio::fs::create_dir_all(&dir_path).await;
+    
+    let file_path = format!("{}/{}", dir_path, file_name);
+    if let Err(e) = tokio::fs::write(&file_path, &data).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to write file: {}", e)).into_response();
     }
-    (StatusCode::BAD_REQUEST, "No file provided").into_response()
+    
+    info!("File uploaded by client for command {}: {}", id, file_path);
+    
+    (StatusCode::OK, "Upload successful").into_response()
 }
 
 // API: Download file (Generic)
@@ -1485,7 +1535,10 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, addr: SocketAddr
                             }
                             Message::Response { id, result } => {
                                 info!("Received response for command {}: {:?}", id, result);
-                                state.results.insert(id, result);
+                                state.results.insert(id, result.clone());
+                                if let Some((_, waiter)) = state.waiters.remove(&id) {
+                                    let _ = waiter.send(result);
+                                }
                             }
                             _ => {}
                         }

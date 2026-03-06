@@ -308,8 +308,8 @@
                     <div class="flex justify-between items-start mb-2">
                         <h3 class="font-bold text-lg text-gray-800">{{ group.name }}</h3>
                         <div class="flex gap-1">
-                            <button @click="openGroupEditor(group)" class="text-gray-500 hover:text-blue-600 p-1" title="Edit">✎</button>
-                            <button @click="deleteGroup(group.id)" class="text-gray-500 hover:text-red-600 p-1" title="Delete">🗑</button>
+                            <button @click="openGroupEditor(group)" class="text-gray-500 hover:text-blue-600 p-1" :title="t('edit')">✎</button>
+                            <button @click="deleteGroup(group.id)" class="text-gray-500 hover:text-red-600 p-1" :title="t('delete')">🗑</button>
                         </div>
                     </div>
                     <div class="text-sm text-gray-500 mb-4 flex-1">
@@ -341,9 +341,9 @@
                     <div class="flex justify-between items-start mb-2">
                         <h3 class="font-bold text-lg text-gray-800">{{ script.name }}</h3>
                         <div class="flex gap-1">
-                            <button @click="openScriptEditor(script)" class="text-gray-500 hover:text-blue-600 p-1" title="Edit">✎</button>
+                            <button @click="openScriptEditor(script)" class="text-gray-500 hover:text-blue-600 p-1" :title="t('edit')">✎</button>
                             <button @click="copyScript(script)" class="text-gray-500 hover:text-indigo-600 p-1" :title="t('copy')">📄</button>
-                            <button @click="deleteScript(script.id)" class="text-gray-500 hover:text-red-600 p-1" title="Delete">🗑</button>
+                            <button @click="deleteScript(script.id)" class="text-gray-500 hover:text-red-600 p-1" :title="t('delete')">🗑</button>
                         </div>
                     </div>
                     <div class="text-sm text-gray-500 mb-4 flex-1">
@@ -402,7 +402,7 @@
         </div>
 
         <!-- History View -->
-        <div v-if="currentView === 'history'" class="bg-white rounded-lg shadow-md overflow-hidden flex-1">
+        <div v-if="currentView === 'history'" class="bg-white rounded-lg shadow-md overflow-hidden flex-1 flex flex-col">
              <div class="p-4 border-b flex justify-between items-center bg-gray-50">
                 <h2 class="font-bold text-lg">{{ t('executionHistory') }}</h2>
                 <div class="flex gap-2">
@@ -410,6 +410,7 @@
                     <button @click="fetchHistory" class="text-blue-600 text-sm hover:underline">{{ t('refresh') }}</button>
                 </div>
             </div>
+            <div class="flex-1 overflow-auto">
             <table class="w-full text-left border-collapse text-sm">
                 <thead>
                     <tr class="bg-gray-50 text-gray-700">
@@ -424,7 +425,12 @@
                     <tr v-for="item in historyList" :key="item.id" class="border-b hover:bg-gray-50">
                         <td class="p-3 font-mono text-xs text-gray-500">{{ new Date(item.started_at).toLocaleString() }}</td>
                         <td class="p-3 font-medium">{{ item.script_name }}</td>
-                        <td class="p-3">{{ item.client_hostname }}</td>
+                        <td class="p-3">
+                            <div class="flex flex-col">
+                                <span>{{ item.client_hostname }}</span>
+                                <span v-if="item.client_alias" class="text-xs text-gray-500">{{ item.client_alias }}</span>
+                            </div>
+                        </td>
                         <td class="p-3">
                             <span :class="{'px-2 py-0.5 rounded-full text-xs font-bold': true, 
                                 'bg-green-100 text-green-700': item.status === 'completed',
@@ -433,11 +439,25 @@
                             }">{{ item.status }}</span>
                         </td>
                         <td class="p-3">
-                            <button @click="viewLogs(item)" class="text-blue-600 hover:underline text-xs">{{ t('viewLogs') }}</button>
+                            <button @click="viewLogs(item)" class="text-blue-600 hover:underline text-xs mr-2">{{ t('viewLogs') }}</button>
+                            <button v-if="item.status === 'failed'" @click="retryExecution(item)" class="text-orange-600 hover:underline text-xs">{{ t('retry') }}</button>
                         </td>
                     </tr>
                 </tbody>
             </table>
+            </div>
+            <!-- History Pagination -->
+            <div class="p-4 border-t bg-gray-50 flex justify-between items-center text-sm text-gray-600">
+                <span>{{ t('total') }}: {{ totalHistory }}</span>
+                <div class="flex gap-2">
+                    <button @click="historyPage--" :disabled="historyPage === 1" class="px-2 py-1 border rounded bg-white hover:bg-gray-100 disabled:opacity-50">«</button>
+                    <button v-for="p in historyPageNumbers" :key="p" @click="p !== '...' ? historyPage = p : null" 
+                        :class="['px-2 py-1 border rounded', p === historyPage ? 'bg-blue-600 text-white border-blue-600' : 'bg-white hover:bg-gray-100', p === '...' ? 'cursor-default border-none hover:bg-transparent' : '']">
+                        {{ p }}
+                    </button>
+                    <button @click="historyPage++" :disabled="historyPage === totalHistoryPages" class="px-2 py-1 border rounded bg-white hover:bg-gray-100 disabled:opacity-50">»</button>
+                </div>
+            </div>
         </div>
 
         <!-- Modals -->
@@ -1533,6 +1553,7 @@
                         editClient: 'Edit Client',
                         ips: 'IP List',
                         copy: 'Copy',
+                        edit: 'Edit',
                     move: 'Move',
                     sourcePath: 'Source Path',
                     destPath: 'Destination Path',
@@ -1603,6 +1624,9 @@
                         logs: 'Logs',
                         selectClients: 'Select Clients to Execute Script',
                         startExecution: 'Start Execution',
+                        retry: 'Retry',
+                        confirmRetry: 'Retry this script execution?',
+                        retryStarted: 'Retry started',
                         editScript: 'Edit Script',
                         runScript: 'Run Script',
                         stepType: 'Step Type',
@@ -1752,6 +1776,7 @@
                         editClient: '编辑客户端',
                         ips: 'IP地址列表',
                         copy: '复制',
+                        edit: '编辑',
                     move: '移动',
                     sourcePath: '源路径',
                     destPath: '目标路径',
@@ -1824,6 +1849,9 @@
                         logs: '日志',
                         selectClients: '选择要执行脚本的客户端',
                         startExecution: '开始执行',
+                        retry: '重试',
+                        confirmRetry: '确定要重试此脚本执行吗？',
+                        retryStarted: '重试已开始',
                         editScript: '编辑脚本',
                         runScript: '运行脚本',
                         stepType: '步骤类型',
@@ -3207,16 +3235,67 @@
                     runScriptAction();
                 }
 
+                const historyPage = ref(1)
+                const historyLimit = ref(50)
+                const totalHistory = ref(0)
+                
+                const totalHistoryPages = computed(() => {
+                    return Math.ceil(totalHistory.value / historyLimit.value)
+                })
+
+                const historyPageNumbers = computed(() => {
+                    const pages = []
+                    const total = totalHistoryPages.value
+                    const current = historyPage.value
+                    
+                    if (total <= 7) {
+                        for (let i = 1; i <= total; i++) pages.push(i)
+                    } else {
+                        if (current <= 4) {
+                            for (let i = 1; i <= 5; i++) pages.push(i)
+                            pages.push('...')
+                            pages.push(total)
+                        } else if (current >= total - 3) {
+                            pages.push(1)
+                            pages.push('...')
+                            for (let i = total - 4; i <= total; i++) pages.push(i)
+                        } else {
+                            pages.push(1)
+                            pages.push('...')
+                            for (let i = current - 1; i <= current + 1; i++) pages.push(i)
+                            pages.push('...')
+                            pages.push(total)
+                        }
+                    }
+                    return pages
+                })
+
                 const fetchHistory = async () => {
                     try {
-                        const res = await apiFetch('/api/history')
+                        const params = new URLSearchParams({
+                            page: historyPage.value,
+                            limit: historyLimit.value
+                        });
+                        const res = await apiFetch(`/api/history?${params.toString()}`)
                         if (res.ok) {
-                            historyList.value = await res.json()
+                            const data = await res.json()
+                            if (Array.isArray(data)) {
+                                // Fallback for old API response
+                                historyList.value = data
+                                totalHistory.value = data.length
+                            } else {
+                                historyList.value = data.history
+                                totalHistory.value = data.total
+                            }
                         }
                     } catch (e) {
                         console.error('Failed to fetch history', e)
                     }
                 }
+                
+                watch(historyPage, () => {
+                    fetchHistory()
+                })
 
                 const clearHistory = async () => {
                     if (!confirm(t('clearLogs') + '?')) return
@@ -3233,6 +3312,28 @@
                     }
                 }
                 
+                const retryExecution = async (item) => {
+                    if (!confirm(t('confirmRetry'))) return
+                    
+                    try {
+                        const res = await apiFetch(`/api/scripts/${item.script_id}/run`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ client_ids: [item.client_id] })
+                        })
+                        
+                        if (res.ok) {
+                            alert(t('retryStarted'))
+                            fetchHistory()
+                        } else {
+                            const err = await res.text()
+                            alert('Failed to retry: ' + err)
+                        }
+                    } catch (e) {
+                        alert('Error: ' + e.message)
+                    }
+                }
+
                 const viewLogs = (item) => {
                     selectedLogs.value = item.logs
                     // Extract execution ID from item or use a temp one if not present (though history items should have one)
@@ -3687,7 +3788,7 @@
                     openScripts, scriptList, selectedScript, isCreatingScript, newScript, scriptStatus,
                     openScriptEditor, saveScript, addStep, removeStep, moveStep, deleteScript, copyScript, openRunScript, executeScript,
                     fetchGroups, groupList, selectedGroup, isCreatingGroup, newGroup, openGroupEditor, saveGroup, deleteGroup, runGroupScripts,
-                    fetchHistory, historyList, viewLogs, selectedLogs, clearHistory,
+                    fetchHistory, historyList, viewLogs, selectedLogs, clearHistory, historyPage, historyLimit, totalHistoryPages, historyPageNumbers, totalHistory, retryExecution,
                     executionList, viewingExecutionId, viewingExecution,
                     selectedClientIds, currentView, fetchScripts,
                     updateList, selectedUpdate, newUpdate, updateFileInput, fetchUpdates, openUploadUpdateModal, uploadUpdate, deleteUpdate, openDeployUpdate, triggerDeploy, selectAllOnlineClients,

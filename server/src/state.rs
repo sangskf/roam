@@ -1,6 +1,6 @@
 use dashmap::DashMap;
 use sqlx::{Pool, Sqlite};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 use serde::{Deserialize, Serialize};
 
@@ -11,6 +11,7 @@ pub struct AppState {
     pub db: Pool<Sqlite>,
     pub clients: DashMap<Uuid, ClientConnection>,
     pub results: DashMap<Uuid, CommandResult>,
+    pub waiters: DashMap<Uuid, oneshot::Sender<CommandResult>>,
     pub active_executions: DashMap<Uuid, ExecutionProgress>,
     pub web_sessions: DashMap<String, String>, // token -> username
     pub config: ServerConfig,
@@ -65,6 +66,7 @@ impl AppState {
             db,
             clients: DashMap::new(),
             results: DashMap::new(),
+            waiters: DashMap::new(),
             active_executions: DashMap::new(),
             web_sessions: DashMap::new(),
             config,
