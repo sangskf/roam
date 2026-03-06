@@ -825,6 +825,17 @@ pub async fn upload_file_client(
 #[derive(serde::Deserialize)]
 pub struct SearchParams {
     pub q: Option<String>,
+    pub page: Option<i64>,
+    pub limit: Option<i64>,
+    pub status: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct PaginatedClients {
+    pub clients: Vec<ClientSummary>,
+    pub total: i64,
+    pub online_count: i64,
+    pub offline_count: i64,
 }
 
 #[derive(serde::Serialize)]
@@ -841,16 +852,112 @@ pub struct ClientSummary {
     pub started_at: Option<String>,
     pub remark: Option<String>,
     pub working_directory: Option<String>,
+    pub display_ip: Option<String>,
 }
 
 pub async fn list_clients(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SearchParams>
-) -> Json<Vec<ClientSummary>> {
-    let rows = sqlx::query("SELECT id, hostname, os, alias, ip, ips, version, status, last_seen, started_at, remark, working_directory FROM clients ORDER BY last_seen DESC")
-        .fetch_all(&state.db)
-        .await
-        .unwrap_or_default();
+) -> Json<PaginatedClients> {
+    let q_param = params.q.as_deref().unwrap_or("").to_lowercase();
+    let page = params.page.unwrap_or(1).max(1);
+    let limit = params.limit.unwrap_or(50).max(1);
+    let offset = (page - 1) * limit;
+
+    // Build WHERE clause
+    let mut where_clause = "1=1".to_string();
+    if !q_param.is_empty() {
+        where_clause.push_str(" AND (lower(hostname) LIKE ? OR lower(alias) LIKE ? OR ip LIKE ? OR ips LIKE ?)");
+    }
+    
+    // Status filter
+    if let Some(status) = &params.status {
+        if status == "online" {
+            where_clause.push_str(" AND status = 'connected'");
+        } else if status == "offline" {
+             where_clause.push_str(" AND status != 'connected'");
+        }
+    }
+
+    // Get Total Count and Offline Count
+    // Note: Online/Offline status is dynamic in memory (state.clients), but we persist 'status' in DB too.
+    // However, DB status might be stale if server crashed. 
+    // Ideally, we should sync memory status to DB periodically or on connect/disconnect.
+    // We already do update status on connect/disconnect.
+    // So DB status should be mostly accurate for "offline" clients.
+    // For online clients, they are in DB as 'connected'.
+    
+    // Let's rely on DB for total count and filtering, but enrich with memory state.
+    
+    let total: i64 = if !q_param.is_empty() {
+        let q_like = format!("%{}%", q_param);
+        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM clients WHERE {}", where_clause))
+            .bind(&q_like)
+            .bind(&q_like)
+            .bind(&q_like)
+            .bind(&q_like)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0)
+    } else if params.status.is_some() {
+        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM clients WHERE {}", where_clause))
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0)
+    } else {
+        sqlx::query_scalar("SELECT COUNT(*) FROM clients")
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0)
+    };
+
+    // For total offline count, we want global count regardless of filter
+    let global_total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM clients").fetch_one(&state.db).await.unwrap_or(0);
+    let online_count = state.clients.len() as i64;
+    let offline_count = if global_total >= online_count { global_total - online_count } else { 0 };
+    
+    // Note: 'total' returned in PaginatedClients is the filtered total for pagination.
+    // 'online_count' and 'offline_count' are global stats for the dashboard counters.
+    // Better approximation: count where status != 'connected' in DB? 
+    // But 'connected' in DB might be stale if server restarted. 
+    // On server start, we should probably reset all 'connected' to 'disconnected'.
+    // Assuming we did that or don't care about extreme precision:
+    // Memory is truth for Online. 
+    // DB Total - Memory Online = Offline.
+    
+    // Query Data
+    // Sort by status ASC (connected < disconnected) to put online clients first, then by last_seen DESC
+    // Note: status in DB is 'connected' or 'disconnected'.
+    // If we want 'connected' first, 'connected' < 'disconnected', so ASC is correct.
+    let query = format!(
+        "SELECT id, hostname, os, alias, ip, ips, version, status, last_seen, started_at, remark, working_directory, display_ip 
+         FROM clients 
+         WHERE {} 
+         ORDER BY status ASC, last_seen DESC 
+         LIMIT ? OFFSET ?", 
+        where_clause
+    );
+
+    let rows = if !q_param.is_empty() {
+        let q_like = format!("%{}%", q_param);
+        sqlx::query(&query)
+            .bind(&q_like)
+            .bind(&q_like)
+            .bind(&q_like)
+            .bind(&q_like)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default()
+    } else {
+        sqlx::query(&query)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default()
+    };
 
     let mut clients: Vec<ClientSummary> = rows.into_iter().map(|r| {
         let id_str: String = r.get("id");
@@ -868,6 +975,7 @@ pub async fn list_clients(
         let db_started_at: Option<chrono::NaiveDateTime> = r.get("started_at");
         let db_remark: Option<String> = r.get("remark");
         let db_working_directory: Option<String> = r.get("working_directory");
+        let db_display_ip: Option<String> = r.get("display_ip");
         
         let last_seen = db_last_seen.map(|d| format!("{}Z", d.format("%Y-%m-%dT%H:%M:%S")));
         let parsed_db_ips: Vec<String> = db_ips.as_deref().and_then(|s| serde_json::from_str(s).ok()).unwrap_or_default();
@@ -922,21 +1030,17 @@ pub async fn list_clients(
             started_at,
             remark: db_remark,
             working_directory: db_working_directory,
+            display_ip: db_display_ip,
         }
     }).collect();
 
-    // Filter
-    if let Some(q) = params.q {
-        let q = q.to_lowercase();
-        clients.retain(|c| {
-            c.hostname.to_lowercase().contains(&q) ||
-            c.alias.as_deref().unwrap_or("").to_lowercase().contains(&q) ||
-            c.ip.contains(&q) ||
-            c.ips.iter().any(|ip| ip.contains(&q))
-        });
-    }
-
-    // Sort: Online first, then Hostname ASC
+    // Sort: Online first, then Hostname ASC (Applied to current page only, which is acceptable but not perfect. 
+    // Ideally we sort in DB, but 'online' status is in memory.
+    // For strict sorting, we'd need to sync status to DB perfectly or fetch all IDs and paginate in memory (bad for scalability).
+    // Given the hybrid nature, sorting the page is a reasonable compromise, or we accept DB sorting by last_seen.)
+    // Current DB query sorts by last_seen DESC.
+    // We can re-sort the page in memory.
+    
     clients.sort_by(|a, b| {
         let status_order = |s: &str| match s {
             "online" => 0,
@@ -947,10 +1051,16 @@ pub async fn list_clients(
         if sa != sb {
             return sa.cmp(&sb);
         }
+        // If status same, keep DB order (implied by stability) or sort by hostname
         a.hostname.cmp(&b.hostname)
     });
 
-    Json(clients)
+    Json(PaginatedClients {
+        clients,
+        total,
+        online_count,
+        offline_count,
+    })
 }
 
 // API: Update Client Remark
@@ -975,6 +1085,30 @@ pub async fn update_client_remark(
     }
     
     (StatusCode::OK, "Client remark updated").into_response()
+}
+
+// API: Update Client Display IP
+#[derive(serde::Deserialize)]
+pub struct UpdateClientDisplayIpRequest {
+    pub display_ip: Option<String>,
+}
+
+pub async fn update_client_display_ip(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<UpdateClientDisplayIpRequest>,
+) -> impl IntoResponse {
+    let id_str = id.to_string();
+    let display_ip = payload.display_ip;
+    
+    if let Err(e) = sqlx::query("UPDATE clients SET display_ip = ? WHERE id = ?")
+        .bind(display_ip)
+        .bind(id_str)
+        .execute(&state.db).await {
+         return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to update client display IP: {}", e)).into_response();
+    }
+    
+    (StatusCode::OK, "Client display IP updated").into_response()
 }
 
 // API: Update Client Working Directory

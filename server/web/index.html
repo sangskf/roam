@@ -56,6 +56,7 @@
                     <!-- Desktop Right Side -->
                     <div class="hidden md:flex items-center gap-4">
                         <span class="text-sm text-gray-500 whitespace-nowrap">{{ t('connectedClients') }}: {{ clients.length }}</span>
+                        <span class="text-sm text-gray-500 whitespace-nowrap ml-2">{{ t('offlineClients') }}: {{ offlineCount }}</span>
                         
                         <!-- Auth Menu -->
                         <div v-if="authEnabled && isLoggedIn" class="relative group">
@@ -189,7 +190,8 @@
                         </div>
                         <div class="grid grid-cols-2 gap-2 text-sm text-gray-600 mb-3">
                         <div @click="openIpModal(client)" class="cursor-pointer text-blue-600 hover:underline">
-                            {{ client.ip }} 
+                            {{ client.display_ip || client.ip }}
+                            <span v-if="client.display_ip" class="text-blue-500 ml-1 text-xs">★</span>
                             <span v-if="client.ips && client.ips.length > 1" class="text-xs text-gray-500">({{ client.ips.length }})</span>
                         </div>
                             <div>{{ client.os }}</div>
@@ -246,7 +248,8 @@
                         <td class="p-4">{{ client.hostname }}</td>
                         <td class="p-4 font-medium">{{ client.alias || '-' }}</td>
                         <td class="p-4 font-mono text-gray-500 cursor-pointer hover:text-blue-600" @click="openIpModal(client)">
-                            {{ client.ip }}
+                            {{ client.display_ip || client.ip }}
+                            <span v-if="client.display_ip" class="ml-1 text-blue-500" :title="t('customDisplayIp')">★</span>
                             <span v-if="client.ips && client.ips.length > 1" class="ml-1 text-xs text-gray-400">({{ client.ips.length }})</span>
                         </td>
                         <td class="p-4">{{ client.os }}</td>
@@ -277,6 +280,17 @@
                     </tr>
                 </tbody>
             </table>
+            </div>
+            <div class="p-4 border-t bg-gray-50 flex justify-between items-center text-sm text-gray-600">
+                <span>{{ t('total') }}: {{ totalClients }} | {{ t('online') }}: {{ onlineCount }} | {{ t('offline') }}: {{ offlineCount }}</span>
+                <div class="flex gap-2">
+                    <button @click="currentPage--" :disabled="currentPage === 1" class="px-2 py-1 border rounded bg-white hover:bg-gray-100 disabled:opacity-50">«</button>
+                    <button v-for="p in pageNumbers" :key="p" @click="p !== '...' ? currentPage = p : null" 
+                        :class="['px-2 py-1 border rounded', p === currentPage ? 'bg-blue-600 text-white border-blue-600' : 'bg-white hover:bg-gray-100', p === '...' ? 'cursor-default border-none hover:bg-transparent' : '']">
+                        {{ p }}
+                    </button>
+                    <button @click="currentPage++" :disabled="currentPage === totalPages" class="px-2 py-1 border rounded bg-white hover:bg-gray-100 disabled:opacity-50">»</button>
+                </div>
             </div>
         </div>
 
@@ -469,10 +483,18 @@
                 <div class="max-h-96 overflow-y-auto">
                     <ul class="divide-y divide-gray-200">
                         <li v-for="ip in selectedClient?.ips" :key="ip" class="py-3 flex justify-between items-center">
-                            <span class="text-sm font-mono text-gray-700">{{ ip }}</span>
-                            <button @click="copyToClipboard(ip)" class="text-blue-600 hover:text-blue-800 text-xs px-2 py-1 rounded border border-blue-200 hover:bg-blue-50">
-                                {{ t('copy') }}
-                            </button>
+                            <div class="flex items-center gap-2">
+                                <span class="text-sm font-mono text-gray-700">{{ ip }}</span>
+                                <span v-if="ip === selectedClient.display_ip" class="bg-blue-100 text-blue-600 text-xs px-1.5 py-0.5 rounded">{{ t('default') }}</span>
+                            </div>
+                            <div class="flex gap-2">
+                                <button @click="setClientDisplayIp(ip)" class="text-xs px-2 py-1 rounded border hover:bg-gray-50 transition" :class="ip === selectedClient.display_ip ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600'">
+                                    {{ ip === selectedClient.display_ip ? t('unsetDefault') : t('setDefault') }}
+                                </button>
+                                <button @click="copyToClipboard(ip)" class="text-blue-600 hover:text-blue-800 text-xs px-2 py-1 rounded border border-blue-200 hover:bg-blue-50">
+                                    {{ t('copy') }}
+                                </button>
+                            </div>
                         </li>
                         <li v-if="!selectedClient?.ips || selectedClient?.ips.length === 0" class="py-4 text-center text-gray-500 text-sm">
                             No IPs found.
@@ -1051,19 +1073,29 @@
                     <h3 class="text-xl font-bold">{{ t('deployUpdate') }}: {{ selectedUpdate?.version }}</h3>
                 </div>
                 <div class="p-6 max-h-[60vh] overflow-auto">
-                    <p class="mb-4 text-sm text-gray-600">{{ t('selectClientsToUpdate') }}</p>
+                    <p class="mb-4 text-sm text-gray-600 flex justify-between items-center">
+                        <span>{{ t('selectClientsToUpdate') }}</span>
+                        <button @click="selectAllOnlineClients" class="text-blue-600 hover:underline text-xs">{{ selectedClientIds.length > 0 ? t('deselectAll') : t('selectAllOnline') }}</button>
+                    </p>
+                    <div class="mb-4">
+                        <input v-model="deploySearchQuery" class="w-full border rounded px-3 py-2 text-sm" :placeholder="t('searchPlaceholder')">
+                    </div>
                     <div class="space-y-2">
-                        <label v-for="client in clients" :key="client.id" class="flex items-center p-2 hover:bg-gray-50 rounded cursor-pointer border">
-                            <input type="checkbox" :value="client.id" v-model="selectedClientIds" class="mr-3 h-4 w-4 text-blue-600">
+                        <label v-for="client in filteredDeployClients" :key="client.id" class="flex items-center p-2 hover:bg-gray-50 rounded cursor-pointer border" :class="{'opacity-50 cursor-not-allowed': !canUpdateClient(client)}">
+                            <input type="checkbox" :value="client.id" v-model="selectedClientIds" class="mr-3 h-4 w-4 text-blue-600" :disabled="!canUpdateClient(client)">
                             <div>
                                 <div class="font-medium text-sm">
                                     {{ client.hostname }}
                                     <span v-if="client.alias" class="text-gray-500 font-normal ml-1">({{ client.alias }})</span>
                                 </div>
-                                <div class="text-xs text-gray-500">{{ client.ip }} - {{ client.os }} - v{{ client.version }}</div>
+                                <div class="text-xs text-gray-500">
+                                    {{ client.ip }} - {{ client.os }} - v{{ client.version }}
+                                    <span v-if="!canUpdateClient(client) && client.status === 'online'" class="text-red-500 ml-1">({{ t('versionTooHigh') }})</span>
+                                    <span v-if="client.status !== 'online'" class="text-gray-400 ml-1">(Offline)</span>
+                                </div>
                             </div>
                         </label>
-                        <div v-if="clients.length === 0" class="text-center text-gray-400 py-4">{{ t('noClients') }}</div>
+                        <div v-if="!filteredDeployClients || filteredDeployClients.length === 0" class="text-center text-gray-400 py-4">{{ t('noClients') }}</div>
                     </div>
                 </div>
                 <div class="p-6 border-t flex justify-end gap-3">
@@ -1149,6 +1181,12 @@
         createApp({
             setup() {
                 const clients = ref([])
+                const totalClients = ref(0)
+                const onlineCount = ref(0)
+                const offlineCount = ref(0)
+                const currentPage = ref(1)
+                const pageSize = ref(50)
+                
                 const serverInfo = ref(null)
                 const currentView = ref('dashboard')
                 const activeModal = ref(null)
@@ -1310,18 +1348,17 @@
                 }
 
                 const filteredClients = computed(() => {
-                    let res = clients.value.filter(client => {
-                        const q = searchQuery.value.toLowerCase()
-                        const matchQuery = !q || 
-                            (client.hostname && client.hostname.toLowerCase().includes(q)) ||
-                            (client.alias && client.alias.toLowerCase().includes(q)) ||
-                            (client.ip && client.ip.includes(q)) ||
-                            (client.version && client.version.includes(q))
-                        
-                        const matchStatus = statusFilter.value === 'all' || client.status === statusFilter.value
-                        
-                        return matchQuery && matchStatus
-                    })
+                    // Clients are already filtered by backend via fetchClients(searchQuery)
+                    // But we might want client-side sorting on the current page.
+                    // Or we just return clients.value if we rely on backend sorting.
+                    // Given we implemented backend pagination, we should rely on backend for filtering.
+                    // But for sorting on the current page, we can still do it client-side for UX responsiveness on small page sizes.
+                    
+                    let res = [...clients.value]; // Copy
+
+                    // Client-side filtering is now redundant if backend does it, but let's keep it safe or remove it?
+                    // If we remove it, the search input needs to trigger fetchClients.
+                    // Let's modify the watcher for searchQuery to trigger fetch.
 
                     return res.sort((a, b) => {
                         let valA = a[sortKey.value]
@@ -1336,6 +1373,35 @@
                     })
                 })
 
+                // Watch search query to trigger fetch with debounce
+                let searchTimeout;
+                watch(searchQuery, (newVal) => {
+                    clearTimeout(searchTimeout);
+                    searchTimeout = setTimeout(() => {
+                        currentPage.value = 1; // Reset to page 1 on search
+                        fetchClients();
+                    }, 300);
+                });
+
+                // Watch page changes
+                watch(currentPage, () => {
+                    fetchClients();
+                });
+
+                // Pagination Controls (computed)
+                const totalPages = computed(() => Math.ceil(totalClients.value / pageSize.value))
+                const pageNumbers = computed(() => {
+                    const pages = []
+                    for (let i = 1; i <= totalPages.value; i++) {
+                        if (i === 1 || i === totalPages.value || (i >= currentPage.value - 2 && i <= currentPage.value + 2)) {
+                            pages.push(i)
+                        } else if (pages[pages.length - 1] !== '...') {
+                            pages.push('...')
+                        }
+                    }
+                    return pages
+                })
+                
                 const formatDate = (dateStr) => {
                     if (!dateStr) return '-';
                     try {
@@ -1344,8 +1410,6 @@
                         return dateStr;
                     }
                 }
-                
-                // Hardware Info
                 const hardwareInfo = ref(null)
 
                 // Shell
@@ -1442,6 +1506,7 @@
                     sourcePath: 'Source Path',
                     destPath: 'Destination Path',
                     path: 'Path',
+                        total: 'Total',
                         actions: 'Actions',
                         noClients: 'No clients connected.',
                         hardware: 'Hardware',
@@ -1619,6 +1684,15 @@
                         riskPipeShell: 'Pipe to shell (remote execution)',
                         riskShutdown: 'System shutdown',
                         riskReboot: 'System reboot',
+                        selectAllOnline: 'Select All Online',
+                        deselectAll: 'Deselect All',
+                        offlineClients: 'Offline Clients',
+                        versionTooHigh: 'Version is already higher or equal',
+                        searchPlaceholder: 'Search...',
+                        default: 'Default',
+                        setDefault: 'Set Default',
+                        unsetDefault: 'Unset Default',
+                        customDisplayIp: 'Custom Display IP',
                     },
                     zh: {
                         dashboardTitle: 'Roam 控制台',
@@ -1648,6 +1722,7 @@
                     sourcePath: '源路径',
                     destPath: '目标路径',
                     path: '路径',
+                        total: '总数',
                         actions: '操作',
                         noClients: '暂无客户端连接',
                         hardware: '硬件信息',
@@ -1827,6 +1902,15 @@
                         riskPipeShell: '管道到Shell (远程执行)',
                         riskShutdown: '系统关机',
                         riskReboot: '系统重启',
+                        selectAllOnline: '全选在线',
+                        deselectAll: '取消全选',
+                        offlineClients: '离线客户端',
+                        versionTooHigh: '版本已是最新或更高',
+                        searchPlaceholder: '搜索...',
+                        default: '默认',
+                        setDefault: '设为默认',
+                        unsetDefault: '取消默认',
+                        customDisplayIp: '自定义展示 IP',
                     }
                 }
 
@@ -1925,9 +2009,23 @@
                 const fetchClients = async () => {
                     if (authEnabled.value && !isLoggedIn.value) return
                     try {
-                        const res = await apiFetch('/api/clients')
+                        const queryParams = new URLSearchParams({
+                            q: searchQuery.value,
+                            page: currentPage.value,
+                            limit: pageSize.value
+                        });
+                        const res = await apiFetch(`/api/clients?${queryParams.toString()}`)
                         if (res.ok) {
-                            clients.value = await res.json()
+                            const data = await res.json()
+                            if (data.clients) {
+                                clients.value = data.clients
+                                totalClients.value = data.total
+                                onlineCount.value = data.online_count
+                                offlineCount.value = data.offline_count
+                            } else {
+                                // Fallback for old API structure if any
+                                clients.value = data
+                            }
                         }
                     } catch (e) {
                         if (e.message !== 'Unauthorized') console.error(e)
@@ -2012,6 +2110,34 @@
                         throw e // Propagate error
                     } finally {
                         commandLoading.value = false
+                    }
+                }
+
+                const setClientDisplayIp = async (ip) => {
+                    if (!selectedClient.value) return
+                    try {
+                        const newIp = (selectedClient.value.display_ip === ip) ? null : ip;
+                        
+                        const res = await apiFetch(`/api/clients/${selectedClient.value.id}/display_ip`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ display_ip: newIp })
+                        })
+                        if (!res.ok) throw new Error(await res.text())
+                        
+                        // Update local state
+                        const client = clients.value.find(c => c.id === selectedClient.value.id)
+                        if (client) {
+                            client.display_ip = newIp
+                        }
+                        // Update selectedClient as well since it's a reference or copy? 
+                        // It depends on how it was assigned. usually selectedClient.value = client.
+                        // But if it's a copy, we need to update it.
+                        selectedClient.value.display_ip = newIp;
+                        
+                        // alert(t('displayIpUpdated')) // Optional
+                    } catch (e) {
+                        alert('Failed to update display IP: ' + e.message)
                     }
                 }
 
@@ -3107,10 +3233,120 @@
                     }
                 }
 
-                const openDeployUpdate = (upd) => {
-                    selectedUpdate.value = upd
-                    selectedClientIds.value = []
-                    activeModal.value = 'deployUpdate'
+                const deploySearchQuery = ref('')
+
+                const compareVersions = (v1, v2) => {
+                    if (!v1 || !v2) return 0;
+                    try {
+                        const s1 = String(v1);
+                        const s2 = String(v2);
+                        const p1 = s1.split('.').map(n => parseInt(n, 10) || 0);
+                        const p2 = s2.split('.').map(n => parseInt(n, 10) || 0);
+                        for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
+                            const n1 = p1[i] || 0;
+                            const n2 = p2[i] || 0;
+                            if (n1 > n2) return 1;
+                            if (n1 < n2) return -1;
+                        }
+                    } catch (e) {
+                        console.error('Version compare error:', e);
+                    }
+                    return 0;
+                }
+
+                const allOnlineClients = ref([])
+                
+                const fetchAllOnlineClients = async () => {
+                    try {
+                        const token = localStorage.getItem('auth_token')
+                        const headers = token ? { 'Authorization': `Bearer ${token}` } : {}
+                        console.log('Fetching all clients for deployment...');
+                        // Remove status=online to rely on memory-based status in response
+                        const res = await fetch('/api/clients?limit=10000', { headers })
+                        if (res.ok) {
+                            const data = await res.json()
+                            console.log('Clients fetched:', data);
+                            // Filter online clients here to ensure accuracy based on memory state returned by API
+                            allOnlineClients.value = (data.clients || []).filter(c => c.status === 'online');
+                            console.log('Online clients filtered:', allOnlineClients.value.length);
+                        } else {
+                            console.error('Fetch failed:', res.status);
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch clients', e)
+                        alert('Failed to load clients list')
+                    }
+                }
+
+                const filteredDeployClients = computed(() => {
+                    if (activeModal.value !== 'deployUpdate') return [];
+                    const q = (deploySearchQuery.value || '').toLowerCase();
+                    // Use allOnlineClients instead of current page clients
+                    console.log('allOnlineClients', allOnlineClients)
+                    const sourceList = allOnlineClients.value; 
+                    
+                    console.log('Filtering clients. Source count:', sourceList ? sourceList.length : 0, 'Query:', q);
+
+                    if (!sourceList) return [];
+                    return sourceList.filter(c => {
+                        if (!c) return false;
+                        const matchSearch = !q || 
+                            (c.hostname && c.hostname.toLowerCase().includes(q)) ||
+                            (c.alias && c.alias.toLowerCase().includes(q)) ||
+                            (c.ip && c.ip.includes(q));
+                        return matchSearch;
+                    });
+                })
+
+                const canUpdateClient = (client) => {
+                    if (!client) return false;
+                    // client.status check is redundant if we fetch only online clients, but good for safety
+                    if (client.status !== 'online') return false;
+                    if (!selectedUpdate.value) return false;
+                    // Check platform
+                    if (selectedUpdate.value.platform && client.os) {
+                        // Check if client OS includes update platform keyword (e.g. "windows" in "Windows 10")
+                        if (!client.os.toLowerCase().includes(selectedUpdate.value.platform.toLowerCase())) {
+                            return false; // Platform mismatch
+                        }
+                    }
+                    
+                    // Check version: update version > client version
+                    return compareVersions(selectedUpdate.value.version, client.version) > 0;
+                }
+
+                const openDeployUpdate = async (upd) => {
+                    try {
+                        selectedUpdate.value = upd
+                        selectedClientIds.value = []
+                        deploySearchQuery.value = ''
+                        activeModal.value = 'deployUpdate'
+                        
+                        // Clear old list first to avoid showing stale data
+                        allOnlineClients.value = [] 
+                        
+                        // Fetch all online clients for deployment
+                        // But wait... fetchAllOnlineClients is defined ABOVE filteredDeployClients but not exposed to template directly?
+                        // It is called here.
+                        // We need to make sure fetchAllOnlineClients is available.
+                        // It is defined in setup(), so it's fine.
+                        await fetchAllOnlineClients()
+                    } catch (e) {
+                        console.error('Error opening deploy modal:', e)
+                        alert('Failed to open deploy modal: ' + e.message)
+                    }
+                }
+
+                const selectAllOnlineClients = () => {
+                    if (selectedClientIds.value.length > 0) {
+                        selectedClientIds.value = []
+                    } else {
+                        // Select all filtered clients that satisfy update condition
+                        const list = filteredDeployClients.value || [];
+                        selectedClientIds.value = list
+                            .filter(c => canUpdateClient(c))
+                            .map(c => c.id)
+                    }
                 }
 
                 const triggerDeploy = async () => {
@@ -3272,12 +3508,14 @@
                 }, { immediate: true });
 
                 return {
-                    clients, serverInfo, activeModal, selectedClient, commandLoading,
+                    clients, totalClients, onlineCount, offlineCount,
+                    currentPage, pageSize, totalPages, pageNumbers,
+                    serverInfo, activeModal, selectedClient, commandLoading,
                     searchQuery, statusFilter, filteredClients, sortKey, sortOrder, toggleSort,
                     hardwareInfo, shellInput, shellOutput, shellFileInput, shellOutputRef, recommendedCommands, runRecommendedCommand,
                     currentShellDir, showShellHistory, shellHistory, selectHistoryCommand, runHistoryCommand,
                     currentPath, fileList, fileInput,
-                    openHardware, openIpModal, copyToClipboard, openShell, runShellCommand, navigateHistory, triggerShellUpload, handleShellUpload,
+                    openHardware, openIpModal, copyToClipboard, setClientDisplayIp, openShell, runShellCommand, navigateHistory, triggerShellUpload, handleShellUpload,
                     verifyAndExecute, cancelDangerousCommand, pendingDangerousCommand, dangerousCommandWarning, dangerousAuthPassword,
                     openFiles, listFiles, 
                     triggerFileUpload, handleFileUpload, downloadFromClient, deleteClient,
@@ -3289,7 +3527,8 @@
                     fetchHistory, historyList, viewLogs, selectedLogs, clearHistory,
                     executionList, viewingExecutionId, viewingExecution,
                     selectedClientIds, currentView, fetchScripts,
-                    updateList, selectedUpdate, newUpdate, updateFileInput, fetchUpdates, openUploadUpdateModal, uploadUpdate, deleteUpdate, openDeployUpdate, triggerDeploy,
+                    updateList, selectedUpdate, newUpdate, updateFileInput, fetchUpdates, openUploadUpdateModal, uploadUpdate, deleteUpdate, openDeployUpdate, triggerDeploy, selectAllOnlineClients,
+                    filteredDeployClients, deploySearchQuery, canUpdateClient,
                     closeModal, formatBytes, navigateUp, joinPath,
                     isMaximized, toggleMaximize, isMenuOpen, toggleMenu,
                     t, toggleLang, lang, formatDate,
@@ -3299,7 +3538,8 @@
                     login, logout, changePassword,
                     // Client Edit exports
                     showClientModal, clientForm, editClient, saveClient,
-                    setAsDefaultCwd
+                    setAsDefaultCwd,
+                    allOnlineClients // Export for debugging
                 }
             }
         }).mount('#app')

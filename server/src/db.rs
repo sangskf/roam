@@ -97,6 +97,7 @@ pub async fn init_db(db_url: &str) -> anyhow::Result<Pool<Sqlite>> {
     let _ = sqlx::query("ALTER TABLE clients ADD COLUMN started_at DATETIME").execute(&pool).await;
     let _ = sqlx::query("ALTER TABLE clients ADD COLUMN remark TEXT").execute(&pool).await;
     let _ = sqlx::query("ALTER TABLE clients ADD COLUMN working_directory TEXT").execute(&pool).await;
+    let _ = sqlx::query("ALTER TABLE clients ADD COLUMN display_ip TEXT").execute(&pool).await;
     let _ = sqlx::query("ALTER TABLE group_scripts ADD COLUMN sort_order INTEGER DEFAULT 0").execute(&pool).await;
 
     // Seed admin user if not exists
@@ -222,6 +223,9 @@ pub async fn init_db(db_url: &str) -> anyhow::Result<Pool<Sqlite>> {
             .bind(1)
             .execute(&pool).await;
     }
+
+    // Reset client status on startup (all disconnected until they reconnect)
+    let _ = sqlx::query("UPDATE clients SET status = 'disconnected'").execute(&pool).await;
 
     Ok(pool)
 }
