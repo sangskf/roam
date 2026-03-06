@@ -2909,6 +2909,12 @@
                                 return { type: 'UploadDir', local_path: s.payload.local_path, remote_path: s.payload.remote_path }
                             } else if (s.type === 'DownloadDir') {
                                 return { type: 'DownloadDir', remote_path: s.payload.remote_path, browser_download: s.payload.browser_download || false }
+                            } else if (s.type === 'Copy') {
+                                return { type: 'Copy', src_path: s.payload.src_path, dest_path: s.payload.dest_path }
+                            } else if (s.type === 'Move') {
+                                return { type: 'Move', src_path: s.payload.src_path, dest_path: s.payload.dest_path }
+                            } else if (s.type === 'Delete') {
+                                return { type: 'Delete', path: s.payload.path }
                             }
                             return s
                         })
@@ -2955,6 +2961,12 @@
                             return { type: 'UploadDir', payload: { local_path: s.local_path, remote_path: s.remote_path } }
                         } else if (s.type === 'DownloadDir') {
                             return { type: 'DownloadDir', payload: { remote_path: s.remote_path, browser_download: s.browser_download } }
+                        } else if (s.type === 'Copy') {
+                            return { type: 'Copy', payload: { src_path: s.src_path, dest_path: s.dest_path } }
+                        } else if (s.type === 'Move') {
+                            return { type: 'Move', payload: { src_path: s.src_path, dest_path: s.dest_path } }
+                        } else if (s.type === 'Delete') {
+                            return { type: 'Delete', payload: { path: s.path } }
                         }
                         return null
                     }).filter(s => s)
