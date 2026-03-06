@@ -1255,8 +1255,35 @@ pub struct ClientUpdateItem {
     pub uploaded_at: String,
 }
 
-pub async fn list_updates(State(state): State<Arc<AppState>>) -> Json<Vec<ClientUpdateItem>> {
-    let rows = sqlx::query("SELECT id, version, filename, platform, strftime('%Y-%m-%dT%H:%M:%SZ', uploaded_at) as uploaded_at FROM client_updates ORDER BY uploaded_at DESC")
+#[derive(serde::Serialize)]
+pub struct PaginatedUpdates {
+    pub updates: Vec<ClientUpdateItem>,
+    pub total: i64,
+}
+
+#[derive(serde::Deserialize)]
+pub struct UpdateParams {
+    pub page: Option<i64>,
+    pub limit: Option<i64>,
+}
+
+pub async fn list_updates(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<UpdateParams>,
+) -> Json<PaginatedUpdates> {
+    let page = params.page.unwrap_or(1).max(1);
+    let limit = params.limit.unwrap_or(50).max(1);
+    let offset = (page - 1) * limit;
+
+    let total = sqlx::query("SELECT COUNT(*) as count FROM client_updates")
+        .fetch_one(&state.db)
+        .await
+        .map(|r| r.try_get::<i64, _>("count").unwrap_or(0))
+        .unwrap_or(0);
+
+    let rows = sqlx::query("SELECT id, version, filename, platform, strftime('%Y-%m-%dT%H:%M:%SZ', uploaded_at) as uploaded_at FROM client_updates ORDER BY uploaded_at DESC LIMIT ? OFFSET ?")
+        .bind(limit)
+        .bind(offset)
         .fetch_all(&state.db)
         .await
         .unwrap_or_default();
@@ -1272,7 +1299,7 @@ pub async fn list_updates(State(state): State<Arc<AppState>>) -> Json<Vec<Client
         }
     }).collect();
     
-    Json(items)
+    Json(PaginatedUpdates { updates: items, total })
 }
 
 pub async fn delete_update(

@@ -365,7 +365,7 @@
                 </button>
             </div>
             
-            <div class="overflow-auto">
+            <div class="overflow-auto flex-1">
                  <table class="w-full text-left border-collapse">
                     <thead>
                         <tr class="bg-gray-50 text-gray-700 text-sm">
@@ -398,6 +398,18 @@
                         </tr>
                     </tbody>
                 </table>
+            </div>
+            <!-- Update Pagination -->
+            <div class="pt-4 mt-2 border-t flex justify-between items-center text-sm text-gray-600">
+                <span>{{ t('total') }}: {{ totalUpdates }}</span>
+                <div class="flex gap-2">
+                    <button @click="updatePage--" :disabled="updatePage === 1" class="px-2 py-1 border rounded bg-white hover:bg-gray-100 disabled:opacity-50">«</button>
+                    <button v-for="p in updatePageNumbers" :key="p" @click="p !== '...' ? updatePage = p : null" 
+                        :class="['px-2 py-1 border rounded', p === updatePage ? 'bg-blue-600 text-white border-blue-600' : 'bg-white hover:bg-gray-100', p === '...' ? 'cursor-default border-none hover:bg-transparent' : '']">
+                        {{ p }}
+                    </button>
+                    <button @click="updatePage++" :disabled="updatePage === totalUpdatePages" class="px-2 py-1 border rounded bg-white hover:bg-gray-100 disabled:opacity-50">»</button>
+                </div>
             </div>
         </div>
 
@@ -1167,6 +1179,13 @@
                     <button type="submit" class="w-full bg-blue-600 text-white font-bold py-2 px-4 rounded hover:bg-blue-700 transition">
                         {{ t('login') }}
                     </button>
+                    
+                    <div class="mt-4 flex items-center">
+                        <input type="checkbox" id="rememberMe" v-model="loginForm.rememberMe" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                        <label for="rememberMe" class="ml-2 block text-sm text-gray-900 cursor-pointer">
+                            {{ t('rememberMe') }}
+                        </label>
+                    </div>
                 </form>
             </div>
         </div>
@@ -1247,11 +1266,24 @@
                 const authEnabled = ref(true) // Default to true (secure by default)
                 const isLoggedIn = ref(false)
                 const username = ref('')
-                const loginForm = ref({ username: '', password: '' })
+                const loginForm = ref({ username: '', password: '', rememberMe: false })
                 const passwordForm = ref({ old_password: '', new_password: '' })
                 const showPasswordModal = ref(false)
 
                 const checkAuth = async () => {
+                    // Auto-fill from localStorage if Remember Me was used
+                    const savedAuth = localStorage.getItem('saved_auth');
+                    if (savedAuth) {
+                        try {
+                            const { username: savedUser, password: savedPass } = JSON.parse(savedAuth);
+                            loginForm.value.username = savedUser;
+                            loginForm.value.password = savedPass;
+                            loginForm.value.rememberMe = true;
+                        } catch (e) {
+                            localStorage.removeItem('saved_auth');
+                        }
+                    }
+
                     try {
                         const token = localStorage.getItem('auth_token')
                         const headers = token ? { 'Authorization': `Bearer ${token}` } : {}
@@ -1290,9 +1322,20 @@
                         if (res.ok) {
                             const data = await res.json()
                             localStorage.setItem('auth_token', data.token)
+                            
+                            // Handle Remember Me
+                            if (loginForm.value.rememberMe) {
+                                localStorage.setItem('saved_auth', JSON.stringify({
+                                    username: loginForm.value.username,
+                                    password: loginForm.value.password
+                                }));
+                            } else {
+                                localStorage.removeItem('saved_auth');
+                            }
+
                             isLoggedIn.value = true
                             username.value = data.username
-                            loginForm.value = { username: '', password: '' }
+                            loginForm.value = { username: '', password: '', rememberMe: false }
                             fetchClients()
                             fetchGroups()
                             fetchScripts()
@@ -1696,6 +1739,7 @@
                         changePassword: 'Change Password',
                         oldPassword: 'Old Password',
                         newPassword: 'New Password',
+                        rememberMe: 'Remember Me',
                         passwordChanged: 'Password changed successfully',
                         passwordChangeFailed: 'Failed to change password',
                         archiveContents: 'Archive Contents',
@@ -1925,6 +1969,7 @@
                         changePassword: '修改密码',
                         oldPassword: '旧密码',
                         newPassword: '新密码',
+                        rememberMe: '记住密码',
                         passwordChanged: '密码修改成功',
                         passwordChangeFailed: '密码修改失败',
                         archiveContents: '压缩包内容',
@@ -3434,16 +3479,66 @@
                      listFiles(newPath);
                 }
                 
+                const updatePage = ref(1)
+                const updateLimit = ref(50)
+                const totalUpdates = ref(0)
+
+                const totalUpdatePages = computed(() => {
+                    return Math.ceil(totalUpdates.value / updateLimit.value)
+                })
+
+                const updatePageNumbers = computed(() => {
+                    const pages = []
+                    const total = totalUpdatePages.value
+                    const current = updatePage.value
+                    
+                    if (total <= 7) {
+                        for (let i = 1; i <= total; i++) pages.push(i)
+                    } else {
+                        if (current <= 4) {
+                            for (let i = 1; i <= 5; i++) pages.push(i)
+                            pages.push('...')
+                            pages.push(total)
+                        } else if (current >= total - 3) {
+                            pages.push(1)
+                            pages.push('...')
+                            for (let i = total - 4; i <= total; i++) pages.push(i)
+                        } else {
+                            pages.push(1)
+                            pages.push('...')
+                            for (let i = current - 1; i <= current + 1; i++) pages.push(i)
+                            pages.push('...')
+                            pages.push(total)
+                        }
+                    }
+                    return pages
+                })
+
                 const fetchUpdates = async () => {
                     try {
-                        const res = await apiFetch('/api/updates')
+                        const params = new URLSearchParams({
+                            page: updatePage.value,
+                            limit: updateLimit.value
+                        });
+                        const res = await apiFetch(`/api/updates?${params.toString()}`)
                         if (res.ok) {
-                            updateList.value = await res.json()
+                            const data = await res.json()
+                            if (Array.isArray(data)) {
+                                updateList.value = data
+                                totalUpdates.value = data.length
+                            } else {
+                                updateList.value = data.updates
+                                totalUpdates.value = data.total
+                            }
                         }
                     } catch (e) {
                         console.error(e)
                     }
                 }
+                
+                watch(updatePage, () => {
+                    fetchUpdates()
+                })
 
                 const openUploadUpdateModal = () => {
                     activeModal.value = 'uploadUpdate'
@@ -3791,7 +3886,7 @@
                     fetchHistory, historyList, viewLogs, selectedLogs, clearHistory, historyPage, historyLimit, totalHistoryPages, historyPageNumbers, totalHistory, retryExecution,
                     executionList, viewingExecutionId, viewingExecution,
                     selectedClientIds, currentView, fetchScripts,
-                    updateList, selectedUpdate, newUpdate, updateFileInput, fetchUpdates, openUploadUpdateModal, uploadUpdate, deleteUpdate, openDeployUpdate, triggerDeploy, selectAllOnlineClients,
+                    updateList, selectedUpdate, newUpdate, updateFileInput, fetchUpdates, openUploadUpdateModal, uploadUpdate, deleteUpdate, openDeployUpdate, triggerDeploy, selectAllOnlineClients, updatePage, updateLimit, totalUpdates, totalUpdatePages, updatePageNumbers,
                     filteredDeployClients, deploySearchQuery, canUpdateClient,
                     clientSelectionSearch, filteredSelectionClients,
                     areAllGroupSelected, toggleSelectAllGroupClients,
