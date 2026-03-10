@@ -545,7 +545,7 @@
             <div class="bg-white rounded-lg shadow-lg flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full md:w-3/4 lg:w-1/2 h-[80vh] md:h-[600px]'">
                 <div class="flex justify-between items-center p-4 border-b bg-gray-50 rounded-t-lg">
                     <div>
-                        <h3 class="font-bold text-lg">{{ t('remoteShell') }}: {{ selectedClient?.hostname }}</h3>
+                        <h3 class="font-bold text-lg">{{ t('remoteShell') }}: {{ selectedClient?.alias ? selectedClient.alias : selectedClient?.hostname }}</h3>
                         <div v-if="currentShellDir" class="text-sm font-mono text-blue-600 flex items-center gap-1 mt-1 flex-wrap">
                             <span>📂</span>
                             <div class="flex flex-wrap items-center gap-1 font-mono">
@@ -753,7 +753,7 @@
         <div v-if="activeModal === 'files'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div class="bg-white rounded-lg shadow-lg flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full md:w-3/4 lg:w-1/2 h-[80vh] md:h-[600px]'">
                 <div class="flex justify-between items-center p-4 border-b bg-gray-50 rounded-t-lg">
-                    <h3 class="font-bold text-lg">{{ t('fileBrowser') }}: {{ selectedClient?.hostname }}</h3>
+                    <h3 class="font-bold text-lg">{{ t('fileBrowser') }}: {{ selectedClient?.alias ? selectedClient.alias : selectedClient?.hostname }}</h3>
                     <div class="flex items-center bg-white border rounded shadow-sm">
                          <button @click="toggleMaximize" class="px-3 py-1 hover:bg-gray-100 text-gray-600 border-r" :title="isMaximized ? t('restore') : t('maximize')">
                             <span v-if="isMaximized">❐</span>
