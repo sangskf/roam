@@ -2,13 +2,19 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct KeyValuePair {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", content = "payload")]
 pub enum Message {
     // Auth
-    Register { 
-        client_id: Uuid, 
+    Register {
+        client_id: Uuid,
         token: String,
-        hostname: String, 
+        hostname: String,
         os: String,
         alias: Option<String>,
         version: String,
@@ -20,13 +26,13 @@ pub enum Message {
 
     // Heartbeat
     Heartbeat,
-    
+
     // Commands (Server -> Client)
     Command {
         id: Uuid, // Command ID to correlate response
         cmd: CommandPayload,
     },
-    
+
     // Responses (Client -> Server)
     Response {
         id: Uuid, // Correlates to Command ID
@@ -40,9 +46,9 @@ pub enum CommandPayload {
     ShellExec { cmd: String, args: Vec<String> },
     ChangeDir { path: String },
     // Server provides a URL for the client to download file FROM
-    DownloadFile { url: String, dest_path: String }, 
+    DownloadFile { url: String, dest_path: String },
     // Server provides a URL for the client to upload file TO
-    UploadFile { src_path: String, upload_url: String }, 
+    UploadFile { src_path: String, upload_url: String },
     ListDir { path: String },
     GetHardwareInfo,
     UpdateClient { url: String },
@@ -55,6 +61,13 @@ pub enum CommandPayload {
     CopyFile { src_path: String, dest_path: String },
     MoveFile { src_path: String, dest_path: String },
     DeleteFile { path: String },
+    HttpRequest {
+        method: String,
+        url: String,
+        headers: Vec<KeyValuePair>,
+        query_params: Vec<KeyValuePair>,
+        body: Option<String>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

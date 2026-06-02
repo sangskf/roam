@@ -201,7 +201,7 @@ async fn connect_and_run(client_id: Uuid, hostname: &str, os: &str, version: &st
                          match parsed {
                              Message::Command { id, cmd } => {
                                  info!("Received command: {:?}", cmd);
-                                 let result = command_handler::handle_command(cmd, config.tls_insecure).await;
+                                 let result = command_handler::handle_command(cmd, config.tls_insecure, config.chunk_size, config.max_concurrent_transfers).await;
                                  info!("Command execution finished. Result: {:?}", result);
                                  let response = Message::Response { id, result };
                                  let json = serde_json::to_string(&response)?;

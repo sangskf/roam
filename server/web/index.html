@@ -924,6 +924,7 @@
                                             <option value="Copy">{{ t('copy') }}</option>
                                             <option value="Move">{{ t('move') }}</option>
                                             <option value="Delete">{{ t('delete') }}</option>
+                                            <option value="HttpRequest">{{ t('httpRequest') }}</option>
                                         </select>
                                     </div>
                                     <div class="flex-1">
@@ -935,13 +936,22 @@
                                         </div>
                                         <div v-if="step.type === 'Upload'">
                                             <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('localPath') }}</label>
-                                            <input v-model="step.local_path" class="w-full border rounded px-2 py-1 text-sm mb-2" placeholder="server/uploads/staging/file.txt">
+                                            <div class="flex gap-2 items-center mb-2">
+                                                <input v-model="step.local_path" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="server/uploads/staging/file.txt">
+                                                <button type="button" @click="step.local_path_is_absolute = !step.local_path_is_absolute" class="px-2 py-1 text-xs rounded border shrink-0 whitespace-nowrap" :class="step.local_path_is_absolute ? 'bg-orange-50 border-orange-300 text-orange-600' : 'bg-gray-50 border-gray-300 text-gray-500'">{{ step.local_path_is_absolute ? '绝对' : '相对' }}</button>
+                                            </div>
                                             <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('remotePath') }}</label>
-                                            <input v-model="step.remote_path" class="w-full border rounded px-2 py-1 text-sm" placeholder="/tmp/file.txt">
+                                            <div class="flex gap-2 items-center">
+                                                <input v-model="step.remote_path" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="/tmp/file.txt">
+                                                <button type="button" @click="step.remote_path_is_absolute = !step.remote_path_is_absolute" class="px-2 py-1 text-xs rounded border shrink-0 whitespace-nowrap" :class="step.remote_path_is_absolute ? 'bg-orange-50 border-orange-300 text-orange-600' : 'bg-gray-50 border-gray-300 text-gray-500'">{{ step.remote_path_is_absolute ? '绝对' : '相对' }}</button>
+                                            </div>
                                         </div>
                                         <div v-if="step.type === 'Download'">
                                             <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('remotePath') }}</label>
-                                            <input v-model="step.remote_path" class="w-full border rounded px-2 py-1 text-sm mb-2" placeholder="/etc/passwd">
+                                            <div class="flex gap-2 items-center mb-2">
+                                                <input v-model="step.remote_path" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="/etc/passwd">
+                                                <button type="button" @click="step.remote_path_is_absolute = !step.remote_path_is_absolute" class="px-2 py-1 text-xs rounded border shrink-0 whitespace-nowrap" :class="step.remote_path_is_absolute ? 'bg-orange-50 border-orange-300 text-orange-600' : 'bg-gray-50 border-gray-300 text-gray-500'">{{ step.remote_path_is_absolute ? '绝对' : '相对' }}</button>
+                                            </div>
                                             <label class="flex items-center text-sm">
                                                 <input type="checkbox" v-model="step.browser_download" class="mr-2">
                                                 {{ t('browserDownload') }}
@@ -949,13 +959,22 @@
                                         </div>
                                         <div v-if="step.type === 'UploadDir'">
                                             <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('localPath') }}</label>
-                                            <input v-model="step.local_path" class="w-full border rounded px-2 py-1 text-sm mb-2" placeholder="Folder name in staging (e.g. my-app)">
+                                            <div class="flex gap-2 items-center mb-2">
+                                                <input v-model="step.local_path" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="Folder name in staging (e.g. my-app)">
+                                                <button type="button" @click="step.local_path_is_absolute = !step.local_path_is_absolute" class="px-2 py-1 text-xs rounded border shrink-0 whitespace-nowrap" :class="step.local_path_is_absolute ? 'bg-orange-50 border-orange-300 text-orange-600' : 'bg-gray-50 border-gray-300 text-gray-500'">{{ step.local_path_is_absolute ? '绝对' : '相对' }}</button>
+                                            </div>
                                             <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('remotePath') }}</label>
-                                            <input v-model="step.remote_path" class="w-full border rounded px-2 py-1 text-sm" placeholder="/opt/my-app">
+                                            <div class="flex gap-2 items-center">
+                                                <input v-model="step.remote_path" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="/opt/my-app">
+                                                <button type="button" @click="step.remote_path_is_absolute = !step.remote_path_is_absolute" class="px-2 py-1 text-xs rounded border shrink-0 whitespace-nowrap" :class="step.remote_path_is_absolute ? 'bg-orange-50 border-orange-300 text-orange-600' : 'bg-gray-50 border-gray-300 text-gray-500'">{{ step.remote_path_is_absolute ? '绝对' : '相对' }}</button>
+                                            </div>
                                         </div>
                                         <div v-if="step.type === 'DownloadDir'">
                                             <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('remotePath') }}</label>
-                                            <input v-model="step.remote_path" class="w-full border rounded px-2 py-1 text-sm mb-2" placeholder="/var/log/app">
+                                            <div class="flex gap-2 items-center mb-2">
+                                                <input v-model="step.remote_path" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="/var/log/app">
+                                                <button type="button" @click="step.remote_path_is_absolute = !step.remote_path_is_absolute" class="px-2 py-1 text-xs rounded border shrink-0 whitespace-nowrap" :class="step.remote_path_is_absolute ? 'bg-orange-50 border-orange-300 text-orange-600' : 'bg-gray-50 border-gray-300 text-gray-500'">{{ step.remote_path_is_absolute ? '绝对' : '相对' }}</button>
+                                            </div>
                                             <label class="flex items-center text-sm">
                                                 <input type="checkbox" v-model="step.browser_download" class="mr-2">
                                                 {{ t('browserDownload') }}
@@ -963,13 +982,56 @@
                                         </div>
                                         <div v-if="step.type === 'Copy' || step.type === 'Move'">
                                             <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('sourcePath') }}</label>
-                                            <input v-model="step.src_path" class="w-full border rounded px-2 py-1 text-sm mb-2" placeholder="/tmp/source.txt">
+                                            <div class="flex gap-2 items-center mb-2">
+                                                <input v-model="step.src_path" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="/tmp/source.txt">
+                                                <button type="button" @click="step.src_path_is_absolute = !step.src_path_is_absolute" class="px-2 py-1 text-xs rounded border shrink-0 whitespace-nowrap" :class="step.src_path_is_absolute ? 'bg-orange-50 border-orange-300 text-orange-600' : 'bg-gray-50 border-gray-300 text-gray-500'">{{ step.src_path_is_absolute ? '绝对' : '相对' }}</button>
+                                            </div>
                                             <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('destPath') }}</label>
-                                            <input v-model="step.dest_path" class="w-full border rounded px-2 py-1 text-sm" placeholder="/tmp/dest.txt">
+                                            <div class="flex gap-2 items-center">
+                                                <input v-model="step.dest_path" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="/tmp/dest.txt">
+                                                <button type="button" @click="step.dest_path_is_absolute = !step.dest_path_is_absolute" class="px-2 py-1 text-xs rounded border shrink-0 whitespace-nowrap" :class="step.dest_path_is_absolute ? 'bg-orange-50 border-orange-300 text-orange-600' : 'bg-gray-50 border-gray-300 text-gray-500'">{{ step.dest_path_is_absolute ? '绝对' : '相对' }}</button>
+                                            </div>
                                         </div>
                                         <div v-if="step.type === 'Delete'">
                                             <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('path') }}</label>
-                                            <input v-model="step.path" class="w-full border rounded px-2 py-1 text-sm" placeholder="/tmp/file_or_dir">
+                                            <div class="flex gap-2 items-center">
+                                                <input v-model="step.path" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="/tmp/file_or_dir">
+                                                <button type="button" @click="step.path_is_absolute = !step.path_is_absolute" class="px-2 py-1 text-xs rounded border shrink-0 whitespace-nowrap" :class="step.path_is_absolute ? 'bg-orange-50 border-orange-300 text-orange-600' : 'bg-gray-50 border-gray-300 text-gray-500'">{{ step.path_is_absolute ? '绝对' : '相对' }}</button>
+                                            </div>
+                                        </div>
+                                        <div v-if="step.type === 'HttpRequest'">
+                                            <label class="block text-xs font-bold text-gray-500 mb-1">URL</label>
+                                            <input v-model="step.url" class="w-full border rounded px-2 py-1 text-sm mb-2" placeholder="https://example.com/api">
+                                            <div class="flex gap-2 mb-2">
+                                                <div class="w-1/3">
+                                                    <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('method') }}</label>
+                                                    <select v-model="step.method" class="w-full border rounded px-2 py-1 text-sm bg-white">
+                                                        <option value="GET">GET</option>
+                                                        <option value="POST">POST</option>
+                                                        <option value="PUT">PUT</option>
+                                                        <option value="PATCH">PATCH</option>
+                                                        <option value="DELETE">DELETE</option>
+                                                        <option value="HEAD">HEAD</option>
+                                                        <option value="OPTIONS">OPTIONS</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('headers') }}</label>
+                                            <div v-for="(h, hi) in step.headers" :key="hi" class="flex gap-1 mb-1 items-center">
+                                                <input v-model="h.key" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="Content-Type">
+                                                <input v-model="h.value" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="application/json">
+                                                <button @click="step.headers.splice(hi, 1)" class="text-red-500 text-sm px-1 shrink-0">✕</button>
+                                            </div>
+                                            <button @click="step.headers.push({key:'', value:''})" class="text-xs text-blue-600 hover:underline mb-2">+ {{ t('addHeader') }}</button>
+                                            <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('queryParams') }}</label>
+                                            <div v-for="(qp, qi) in step.query_params" :key="qi" class="flex gap-1 mb-1 items-center">
+                                                <input v-model="qp.key" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="key">
+                                                <input v-model="qp.value" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="value">
+                                                <button @click="step.query_params.splice(qi, 1)" class="text-red-500 text-sm px-1 shrink-0">✕</button>
+                                            </div>
+                                            <button @click="step.query_params.push({key:'', value:''})" class="text-xs text-blue-600 hover:underline mb-2">+ {{ t('addQueryParam') }}</button>
+                                            <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('body') }}</label>
+                                            <textarea v-model="step.body" class="w-full border rounded px-2 py-1 text-sm font-mono" rows="3" placeholder='{"key": "value"}'></textarea>
                                         </div>
                                     </div>
                                 </div>
@@ -1639,10 +1701,10 @@
                         ips: 'IP List',
                         copy: 'Copy',
                         edit: 'Edit',
-                    move: 'Move',
-                    sourcePath: 'Source Path',
-                    destPath: 'Destination Path',
-                    path: 'Path',
+                        move: 'Move',
+                        sourcePath: 'Source Path',
+                        destPath: 'Destination Path',
+                        path: 'Path',
                         total: 'Total',
                         actions: 'Actions',
                         noClients: 'No clients connected.',
@@ -1718,6 +1780,13 @@
                         localPath: 'Local Path (Server)',
                         remotePath: 'Remote Path (Client)',
                         args: 'Arguments',
+                        url: 'URL',
+                        method: 'Method',
+                        headers: 'Headers',
+                        queryParams: 'Query Params',
+                        body: 'Body',
+                        addHeader: 'Add Header',
+                        addQueryParam: 'Add Query Param',
                         cancel: 'Cancel',
                         saveScript: 'Save Script',
                         executionLogs: 'Execution Logs',
@@ -1770,6 +1839,7 @@
                         uploadDir: 'Upload Directory',
                         downloadDir: 'Download Directory',
                         updates: 'Updates',
+                        httpRequest: 'HTTP Request',
                         searchPlaceholder: 'Search hostname, alias, IP...',
                         allStatus: 'All Status',
                         openLink: 'Open Link',
@@ -1863,10 +1933,10 @@
                         ips: 'IP地址列表',
                         copy: '复制',
                         edit: '编辑',
-                    move: '移动',
-                    sourcePath: '源路径',
-                    destPath: '目标路径',
-                    path: '路径',
+                        move: '移动',
+                        sourcePath: '源路径',
+                        destPath: '目标路径',
+                        path: '路径',
                         total: '总数',
                         actions: '操作',
                         noClients: '暂无客户端连接',
@@ -1944,6 +2014,13 @@
                         localPath: '本地路径 (服务端)',
                         remotePath: '远程路径 (客户端)',
                         args: '参数',
+                        url: 'URL',
+                        method: '方法',
+                        headers: '请求头',
+                        queryParams: '查询参数',
+                        body: '请求体',
+                        addHeader: '添加请求头',
+                        addQueryParam: '添加查询参数',
                         cancel: '取消',
                         saveScript: '保存脚本',
                         executionLogs: '执行日志',
@@ -1997,6 +2074,7 @@
                         uploadDir: '上传文件夹',
                         downloadDir: '下载文件夹',
                         updates: '更新管理',
+                        httpRequest: 'HTTP 请求',
                         searchPlaceholder: '搜索主机名、别名、IP...',
                         allStatus: '全部状态',
                         openLink: '打开链接',
@@ -3239,19 +3317,21 @@
                             if (s.type === 'Shell') {
                                 return { type: 'Shell', cmd: s.payload.cmd, args: s.payload.args.join(' ') }
                             } else if (s.type === 'Upload') {
-                                return { type: 'Upload', local_path: s.payload.local_path, remote_path: s.payload.remote_path }
+                                return { type: 'Upload', local_path: s.payload.local_path, remote_path: s.payload.remote_path, local_path_is_absolute: s.payload.local_path_is_absolute || false, remote_path_is_absolute: s.payload.remote_path_is_absolute || false }
                             } else if (s.type === 'Download') {
-                                return { type: 'Download', remote_path: s.payload.remote_path, browser_download: s.payload.browser_download || false }
+                                return { type: 'Download', remote_path: s.payload.remote_path, browser_download: s.payload.browser_download || false, remote_path_is_absolute: s.payload.remote_path_is_absolute || false }
                             } else if (s.type === 'UploadDir') {
-                                return { type: 'UploadDir', local_path: s.payload.local_path, remote_path: s.payload.remote_path }
+                                return { type: 'UploadDir', local_path: s.payload.local_path, remote_path: s.payload.remote_path, local_path_is_absolute: s.payload.local_path_is_absolute || false, remote_path_is_absolute: s.payload.remote_path_is_absolute || false }
                             } else if (s.type === 'DownloadDir') {
-                                return { type: 'DownloadDir', remote_path: s.payload.remote_path, browser_download: s.payload.browser_download || false }
+                                return { type: 'DownloadDir', remote_path: s.payload.remote_path, browser_download: s.payload.browser_download || false, remote_path_is_absolute: s.payload.remote_path_is_absolute || false }
                             } else if (s.type === 'Copy') {
-                                return { type: 'Copy', src_path: s.payload.src_path, dest_path: s.payload.dest_path }
+                                return { type: 'Copy', src_path: s.payload.src_path, dest_path: s.payload.dest_path, src_path_is_absolute: s.payload.src_path_is_absolute || false, dest_path_is_absolute: s.payload.dest_path_is_absolute || false }
                             } else if (s.type === 'Move') {
-                                return { type: 'Move', src_path: s.payload.src_path, dest_path: s.payload.dest_path }
+                                return { type: 'Move', src_path: s.payload.src_path, dest_path: s.payload.dest_path, src_path_is_absolute: s.payload.src_path_is_absolute || false, dest_path_is_absolute: s.payload.dest_path_is_absolute || false }
                             } else if (s.type === 'Delete') {
-                                return { type: 'Delete', path: s.payload.path }
+                                return { type: 'Delete', path: s.payload.path, path_is_absolute: s.payload.path_is_absolute || false }
+                            } else if (s.type === 'HttpRequest') {
+                                return { type: 'HttpRequest', url: s.payload.url, method: s.payload.method || 'GET', headers: s.payload.headers || [], query_params: s.payload.query_params || [], body: s.payload.body || '' }
                             }
                             return s
                         })
@@ -3265,7 +3345,7 @@
                 }
 
                 const addStep = () => {
-                    newScript.value.steps.push({ type: 'Shell', cmd: '', args: '', local_path: '', remote_path: '' })
+                    newScript.value.steps.push({ type: 'Shell', cmd: '', args: '', local_path: '', remote_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path_is_absolute: false, dest_path_is_absolute: false, path_is_absolute: false, url: '', method: 'GET', headers: [], query_params: [], body: '' })
                 }
 
                 const removeStep = (index) => {
@@ -3291,19 +3371,21 @@
                         if (s.type === 'Shell') {
                             return { type: 'Shell', payload: { cmd: s.cmd, args: s.args.split(' ').filter(a => a) } }
                         } else if (s.type === 'Upload') {
-                            return { type: 'Upload', payload: { local_path: s.local_path, remote_path: s.remote_path } }
+                            return { type: 'Upload', payload: { local_path: s.local_path, remote_path: s.remote_path, local_path_is_absolute: s.local_path_is_absolute || false, remote_path_is_absolute: s.remote_path_is_absolute || false } }
                         } else if (s.type === 'Download') {
-                            return { type: 'Download', payload: { remote_path: s.remote_path, browser_download: s.browser_download } }
+                            return { type: 'Download', payload: { remote_path: s.remote_path, browser_download: s.browser_download, remote_path_is_absolute: s.remote_path_is_absolute || false } }
                         } else if (s.type === 'UploadDir') {
-                            return { type: 'UploadDir', payload: { local_path: s.local_path, remote_path: s.remote_path } }
+                            return { type: 'UploadDir', payload: { local_path: s.local_path, remote_path: s.remote_path, local_path_is_absolute: s.local_path_is_absolute || false, remote_path_is_absolute: s.remote_path_is_absolute || false } }
                         } else if (s.type === 'DownloadDir') {
-                            return { type: 'DownloadDir', payload: { remote_path: s.remote_path, browser_download: s.browser_download } }
+                            return { type: 'DownloadDir', payload: { remote_path: s.remote_path, browser_download: s.browser_download, remote_path_is_absolute: s.remote_path_is_absolute || false } }
                         } else if (s.type === 'Copy') {
-                            return { type: 'Copy', payload: { src_path: s.src_path, dest_path: s.dest_path } }
+                            return { type: 'Copy', payload: { src_path: s.src_path, dest_path: s.dest_path, src_path_is_absolute: s.src_path_is_absolute || false, dest_path_is_absolute: s.dest_path_is_absolute || false } }
                         } else if (s.type === 'Move') {
-                            return { type: 'Move', payload: { src_path: s.src_path, dest_path: s.dest_path } }
+                            return { type: 'Move', payload: { src_path: s.src_path, dest_path: s.dest_path, src_path_is_absolute: s.src_path_is_absolute || false, dest_path_is_absolute: s.dest_path_is_absolute || false } }
                         } else if (s.type === 'Delete') {
-                            return { type: 'Delete', payload: { path: s.path } }
+                            return { type: 'Delete', payload: { path: s.path, path_is_absolute: s.path_is_absolute || false } }
+                        } else if (s.type === 'HttpRequest') {
+                            return { type: 'HttpRequest', payload: { url: s.url, method: s.method, headers: s.headers || [], query_params: s.query_params || [], body: s.body || '' } }
                         }
                         return null
                     }).filter(s => s)

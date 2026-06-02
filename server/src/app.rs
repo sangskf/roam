@@ -1,5 +1,5 @@
 use axum::{
-    routing::{get, post},
+    routing::{get, post, put},
     Router,
     extract::{DefaultBodyLimit, State, Request},
     middleware::{self, Next},
@@ -70,6 +70,8 @@ pub async fn run(shutdown_signal: impl std::future::Future<Output = ()> + Send +
         .route("/api/commands/:id/result", get(handlers::get_command_result))
         .route("/api/files/admin-upload", post(handlers::upload_file_admin))
         .route("/api/files/client-upload/:id", post(handlers::upload_file_client))
+        .route("/api/files/chunked-upload/:cmd_id/chunk/:chunk_index", put(handlers::upload_chunk))
+        .route("/api/files/chunked-upload/:cmd_id/complete", post(handlers::complete_chunked_upload))
         .nest_service("/api/files/download", ServeDir::new("uploads"))
         .route("/api/groups", get(handlers::list_groups).post(handlers::create_group))
         .route("/api/groups/:id", axum::routing::delete(handlers::delete_group).put(handlers::update_group))
@@ -157,9 +159,9 @@ async fn auth_middleware(
          return next.run(request).await;
     }
 
-    // /api/files/download and /api/files/client-upload are public (used by clients)
+    // /api/files/download, /api/files/client-upload and /api/files/chunked-upload are public (used by clients)
     // /api/files/admin-upload should be protected
-    if path.starts_with("/api/files/download/") || path.starts_with("/api/files/client-upload/") {
+    if path.starts_with("/api/files/download/") || path.starts_with("/api/files/client-upload/") || path.starts_with("/api/files/chunked-upload/") {
          return next.run(request).await;
     }
 

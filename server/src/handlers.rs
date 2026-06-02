@@ -2,11 +2,13 @@ use axum::{
     extract::{ws::{Message as WsMessage, WebSocket, WebSocketUpgrade}, State, Json, Path, ConnectInfo, Multipart, Query},
     response::IntoResponse,
     http::{StatusCode, HeaderMap},
+    body::Bytes,
 };
 use futures::{sink::SinkExt, stream::StreamExt};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 use tracing::{info, error, warn};
 use std::net::SocketAddr;
@@ -475,6 +477,17 @@ fn zip_directory(src_dir: &str, dst_file: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn expand_path(path: &str) -> String {
+    if path == "~" {
+        return std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+    }
+    if path.starts_with("~/") {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+        return format!("{}/{}", home.trim_end_matches('/'), &path[2..]);
+    }
+    path.to_string()
+}
+
 async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGroup, history_id: Uuid, server_host: String) {
     info!("Starting script {} on client {}", script.name, client_id);
     
@@ -510,11 +523,25 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
 
         let cmd_payload_result = match step {
             ScriptStep::Shell { cmd, args } => Ok(CommandPayload::ShellExec { cmd: cmd.clone(), args: args.clone() }),
-            ScriptStep::Upload { local_path, remote_path } => {
-                let download_url = format!("{}/api/files/download/staging/{}", base_url, local_path);
-                Ok(CommandPayload::DownloadFile { url: download_url, dest_path: remote_path.clone() })
+            ScriptStep::Upload { local_path, remote_path, local_path_is_absolute, .. } => {
+                if local_path_is_absolute.unwrap_or(false) {
+                    let expanded = expand_path(local_path);
+                    let file_name = std::path::Path::new(&expanded).file_name().unwrap_or_default().to_string_lossy();
+                    let staging_name = format!("absolute_{}_{}", Uuid::new_v4(), file_name);
+                    let staging_path = format!("uploads/staging/{}", staging_name);
+                    match tokio::fs::copy(&expanded, &staging_path).await {
+                        Ok(_) => {
+                            let download_url = format!("{}/api/files/download/staging/{}", base_url, staging_name);
+                            Ok(CommandPayload::DownloadFile { url: download_url, dest_path: remote_path.clone() })
+                        },
+                        Err(e) => Err(format!("Failed to copy absolute path file: {}", e))
+                    }
+                } else {
+                    let download_url = format!("{}/api/files/download/staging/{}", base_url, local_path);
+                    Ok(CommandPayload::DownloadFile { url: download_url, dest_path: remote_path.clone() })
+                }
             },
-            ScriptStep::Download { remote_path, browser_download } => {
+            ScriptStep::Download { remote_path, browser_download, .. } => {
                 let upload_id = Uuid::new_v4();
                 let upload_url = format!("{}/api/files/client-upload/{}", base_url, upload_id);
                 
@@ -530,12 +557,19 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
                 
                 Ok(CommandPayload::UploadFile { src_path: remote_path.clone(), upload_url })
             },
-            ScriptStep::UploadDir { local_path, remote_path } => {
-                // Zip the directory first
-                let src_dir = format!("uploads/staging/{}", local_path);
-                let zip_name = format!("{}.zip", local_path);
+            ScriptStep::UploadDir { local_path, remote_path, local_path_is_absolute, .. } => {
+                let (src_dir, zip_name) = if local_path_is_absolute.unwrap_or(false) {
+                    // Absolute path — zip directly from the filesystem
+                    let expanded = expand_path(local_path);
+                    let name = std::path::Path::new(&expanded).file_name().unwrap_or_default().to_string_lossy();
+                    let safe_name = format!("absolute_dir_{}_{}.zip", Uuid::new_v4(), name);
+                    (expanded, safe_name)
+                } else {
+                    let safe_name = format!("{}.zip", local_path);
+                    (format!("uploads/staging/{}", local_path), safe_name)
+                };
                 let dst_zip = format!("uploads/staging/{}", zip_name);
-                
+
                 match zip_directory(&src_dir, &dst_zip) {
                     Ok(_) => {
                         let download_url = format!("{}/api/files/download/staging/{}", base_url, zip_name);
@@ -544,7 +578,7 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
                     Err(e) => Err(format!("Failed to zip directory: {}", e))
                 }
             },
-            ScriptStep::DownloadDir { remote_path, browser_download } => {
+            ScriptStep::DownloadDir { remote_path, browser_download, .. } => {
                 let upload_id = Uuid::new_v4();
                 // Client will upload a zip file, server receives it as generic file upload
                 let upload_url = format!("{}/api/files/client-upload/{}", base_url, upload_id);
@@ -561,26 +595,36 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
 
                 Ok(CommandPayload::ZipAndUpload { src_path: remote_path.clone(), upload_url })
             },
-            ScriptStep::Copy { src_path, dest_path } => {
+            ScriptStep::Copy { src_path, dest_path, .. } => {
                 Ok(CommandPayload::CopyFile { src_path: src_path.clone(), dest_path: dest_path.clone() })
             },
-            ScriptStep::Move { src_path, dest_path } => {
+            ScriptStep::Move { src_path, dest_path, .. } => {
                 Ok(CommandPayload::MoveFile { src_path: src_path.clone(), dest_path: dest_path.clone() })
             },
-            ScriptStep::Delete { path } => {
+            ScriptStep::Delete { path, .. } => {
                 Ok(CommandPayload::DeleteFile { path: path.clone() })
             }
+            ScriptStep::HttpRequest { url, method, headers, query_params, body, .. } => {
+                Ok(CommandPayload::HttpRequest {
+                    url: url.clone(),
+                    method: method.clone().unwrap_or_else(|| "GET".to_string()),
+                    headers: headers.clone().unwrap_or_default(),
+                    query_params: query_params.clone().unwrap_or_default(),
+                    body: body.clone(),
+                })
+            }
         };
-        
+
         let step_desc = match step {
             ScriptStep::Shell { cmd, args } => format!("Shell: {} {}", cmd, args.join(" ")),
-            ScriptStep::Upload { local_path, remote_path } => format!("Upload: {} -> {}", local_path, remote_path),
+            ScriptStep::Upload { local_path, remote_path, .. } => format!("Upload: {} -> {}", local_path, remote_path),
             ScriptStep::Download { remote_path, .. } => format!("Download: {}", remote_path),
-            ScriptStep::UploadDir { local_path, remote_path } => format!("UploadDir: {} -> {}", local_path, remote_path),
+            ScriptStep::UploadDir { local_path, remote_path, .. } => format!("UploadDir: {} -> {}", local_path, remote_path),
             ScriptStep::DownloadDir { remote_path, .. } => format!("DownloadDir: {}", remote_path),
-            ScriptStep::Copy { src_path, dest_path } => format!("Copy: {} -> {}", src_path, dest_path),
-            ScriptStep::Move { src_path, dest_path } => format!("Move: {} -> {}", src_path, dest_path),
-            ScriptStep::Delete { path } => format!("Delete: {}", path),
+            ScriptStep::Copy { src_path, dest_path, .. } => format!("Copy: {} -> {}", src_path, dest_path),
+            ScriptStep::Move { src_path, dest_path, .. } => format!("Move: {} -> {}", src_path, dest_path),
+            ScriptStep::Delete { path, .. } => format!("Delete: {}", path),
+            ScriptStep::HttpRequest { url, method, .. } => format!("HttpRequest: {} {}", method.clone().unwrap_or_else(|| "GET".to_string()), url),
         };
         
         let log_start = format!("Step {}: Started - {}", i + 1, step_desc);
@@ -860,6 +904,76 @@ pub async fn upload_file_client(
     info!("File uploaded by client for command {}: {}", id, file_path);
     
     (StatusCode::OK, "Upload successful").into_response()
+}
+
+// API: Chunked Upload - Receive a single chunk
+pub async fn upload_chunk(
+    Path((cmd_id, chunk_index)): Path<(Uuid, usize)>,
+    body: Bytes,
+) -> impl IntoResponse {
+    let dir_path = format!("uploads/chunked/{}", cmd_id);
+    if let Err(e) = tokio::fs::create_dir_all(&dir_path).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create chunk dir: {}", e)).into_response();
+    }
+
+    let chunk_path = format!("{}/{}", dir_path, chunk_index);
+    if let Err(e) = tokio::fs::write(&chunk_path, &body).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to write chunk: {}", e)).into_response();
+    }
+
+    info!("Chunk {} received for command {}", chunk_index, cmd_id);
+    (StatusCode::OK, "Chunk uploaded").into_response()
+}
+
+#[derive(serde::Deserialize)]
+pub struct CompleteChunkedUpload {
+    pub filename: String,
+    pub total_chunks: usize,
+}
+
+// API: Chunked Upload - Complete and assemble chunks into final file
+pub async fn complete_chunked_upload(
+    Path(cmd_id): Path<Uuid>,
+    Json(payload): Json<CompleteChunkedUpload>,
+) -> impl IntoResponse {
+    let chunk_dir = format!("uploads/chunked/{}", cmd_id);
+    let out_dir = format!("uploads/client_data/{}", cmd_id);
+    let out_path = format!("{}/{}", out_dir, payload.filename);
+
+    // Create output directory
+    if let Err(e) = tokio::fs::create_dir_all(&out_dir).await {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create output dir: {}", e)).into_response();
+    }
+
+    // Open output file for writing
+    let mut out_file = match tokio::fs::File::create(&out_path).await {
+        Ok(f) => f,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create output file: {}", e)).into_response(),
+    };
+
+    // Read and concatenate chunks in order
+    for i in 0..payload.total_chunks {
+        let chunk_path = format!("{}/{}", chunk_dir, i);
+        match tokio::fs::read(&chunk_path).await {
+            Ok(data) => {
+                if let Err(e) = out_file.write_all(&data).await {
+                    return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to write chunk {}: {}", i, e)).into_response();
+                }
+            }
+            Err(e) => {
+                return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to read chunk {}: {}", i, e)).into_response();
+            }
+        }
+    }
+
+    // Flush before cleanup
+    let _ = out_file.flush().await;
+
+    // Cleanup chunk directory
+    let _ = tokio::fs::remove_dir_all(&chunk_dir).await;
+
+    info!("Chunked upload completed for command {}: {}", cmd_id, out_path);
+    (StatusCode::OK, "Upload completed successfully").into_response()
 }
 
 // API: Download file (Generic)

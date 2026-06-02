@@ -8,6 +8,8 @@ pub struct ClientConfig {
     pub heartbeat_interval_sec: u64,
     pub alias: Option<String>,
     pub tls_insecure: bool,
+    pub chunk_size: usize,
+    pub max_concurrent_transfers: usize,
 }
 
 impl ClientConfig {
@@ -17,7 +19,9 @@ impl ClientConfig {
             .set_default("auth_token", "secret-token")?
             .set_default("heartbeat_interval_sec", 10)?
             .set_default("alias", None::<String>)?
-            .set_default("tls_insecure", false)?;
+            .set_default("tls_insecure", false)?
+            .set_default("chunk_size", 8 * 1024 * 1024)?
+            .set_default("max_concurrent_transfers", 4)?;
 
         // 1. Prioritize loading config from executable directory (Production/Service)
         let mut config_found = false;

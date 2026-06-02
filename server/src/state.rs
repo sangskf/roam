@@ -4,7 +4,7 @@ use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 use serde::{Deserialize, Serialize};
 
-use common::{Message, CommandResult};
+use common::{Message, CommandResult, KeyValuePair};
 use crate::config::ServerConfig;
 
 pub struct AppState {
@@ -51,13 +51,45 @@ pub struct ScriptGroup {
 #[serde(tag = "type", content = "payload")]
 pub enum ScriptStep {
     Shell { cmd: String, args: Vec<String> },
-    Upload { local_path: String, remote_path: String },
-    Download { remote_path: String, browser_download: Option<bool> },
-    UploadDir { local_path: String, remote_path: String },
-    DownloadDir { remote_path: String, browser_download: Option<bool> },
-    Copy { src_path: String, dest_path: String },
-    Move { src_path: String, dest_path: String },
-    Delete { path: String },
+    Upload {
+        local_path: String, remote_path: String,
+        #[serde(default)] local_path_is_absolute: Option<bool>,
+        #[serde(default)] remote_path_is_absolute: Option<bool>,
+    },
+    Download {
+        remote_path: String, browser_download: Option<bool>,
+        #[serde(default)] remote_path_is_absolute: Option<bool>,
+    },
+    UploadDir {
+        local_path: String, remote_path: String,
+        #[serde(default)] local_path_is_absolute: Option<bool>,
+        #[serde(default)] remote_path_is_absolute: Option<bool>,
+    },
+    DownloadDir {
+        remote_path: String, browser_download: Option<bool>,
+        #[serde(default)] remote_path_is_absolute: Option<bool>,
+    },
+    Copy {
+        src_path: String, dest_path: String,
+        #[serde(default)] src_path_is_absolute: Option<bool>,
+        #[serde(default)] dest_path_is_absolute: Option<bool>,
+    },
+    Move {
+        src_path: String, dest_path: String,
+        #[serde(default)] src_path_is_absolute: Option<bool>,
+        #[serde(default)] dest_path_is_absolute: Option<bool>,
+    },
+    Delete {
+        path: String,
+        #[serde(default)] path_is_absolute: Option<bool>,
+    },
+    HttpRequest {
+        url: String,
+        #[serde(default)] method: Option<String>,
+        #[serde(default)] headers: Option<Vec<KeyValuePair>>,
+        #[serde(default)] query_params: Option<Vec<KeyValuePair>>,
+        #[serde(default)] body: Option<String>,
+    },
 }
 
 impl AppState {

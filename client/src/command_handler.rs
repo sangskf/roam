@@ -1,13 +1,17 @@
 use std::process::Stdio;
 use sysinfo::System;
 use tokio::process::Command;
+use tokio::io::{AsyncWriteExt, AsyncSeekExt, AsyncReadExt};
 use std::fs;
-use std::path::PathBuf;
+use std::io::SeekFrom;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 use tracing::{info, error};
 use walkdir::WalkDir;
 use zip::write::FileOptions;
 
-use common::{CommandPayload, CommandResult, HardwareInfo, FileInfo};
+use common::{CommandPayload, CommandResult, HardwareInfo, FileInfo, KeyValuePair};
 
 fn expand_path(path: &str) -> PathBuf {
     if path == "~" {
@@ -100,7 +104,215 @@ fn unzip_file(zip_path: &std::path::Path, dest_dir: &std::path::Path) -> anyhow:
     Ok(())
 }
 
-pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool) -> CommandResult {
+fn build_http_client(tls_insecure: bool) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .danger_accept_invalid_certs(tls_insecure)
+        .timeout(Duration::from_secs(3600))
+        .build()
+        .map_err(|e| format!("Failed to build http client: {}", e))
+}
+
+async fn single_download(url: &str, dest_path: &Path, client: &reqwest::Client) -> Result<(), String> {
+    let resp = client.get(url).send().await.map_err(|e| format!("Download failed: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("Download failed with status: {}", resp.status()));
+    }
+    let bytes = resp.bytes().await.map_err(|e| format!("Failed to read response: {}", e))?;
+
+    match tokio::fs::write(dest_path, &bytes).await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            if let Some(parent) = dest_path.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+                tokio::fs::write(dest_path, &bytes).await.map_err(|e| format!("Failed to write file after creating dirs: {}", e))
+            } else {
+                Err(format!("Failed to write file: {}", e))
+            }
+        }
+    }
+}
+
+async fn chunked_download(url: &str, dest_path: &Path, client: &reqwest::Client, chunk_size: usize, max_concurrent: usize) -> Result<(), String> {
+    // HEAD request to get file size and check range support
+    let head_resp = client.head(url).send().await.map_err(|e| format!("HEAD request failed: {}", e))?;
+
+    let file_size: usize = head_resp
+        .headers()
+        .get(reqwest::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(|| "Missing Content-Length header".to_string())?;
+
+    let accept_ranges = head_resp
+        .headers()
+        .get(reqwest::header::ACCEPT_RANGES)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if file_size <= chunk_size || !accept_ranges.contains("bytes") {
+        return single_download(url, dest_path, client).await;
+    }
+
+    let total_chunks = file_size.div_ceil(chunk_size);
+
+    if let Some(parent) = dest_path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
+    let mut handles = Vec::with_capacity(total_chunks);
+    let temp_dir = std::env::temp_dir();
+    let session_id = uuid::Uuid::new_v4();
+
+    for i in 0..total_chunks {
+        let start = i * chunk_size;
+        let end = std::cmp::min(start + chunk_size, file_size) - 1;
+        let range_header = format!("bytes={}-{}", start, end);
+
+        let client = client.clone();
+        let url_str = url.to_string();
+        let chunk_path = temp_dir.join(format!("roam_dl_{}_{}", session_id, i));
+        let sem = semaphore.clone();
+
+        handles.push(tokio::spawn(async move {
+            let _permit = sem.acquire().await.map_err(|e| format!("Semaphore error: {}", e))?;
+            let resp = client.get(&url_str)
+                .header(reqwest::header::RANGE, &range_header)
+                .send()
+                .await
+                .map_err(|e| format!("Chunk {} download failed: {}", i, e))?;
+
+            if !resp.status().is_success() {
+                return Err::<(usize, PathBuf), String>(format!("Chunk {} download failed with status: {}", i, resp.status()));
+            }
+
+            let bytes = resp.bytes().await.map_err(|e| format!("Chunk {} read failed: {}", i, e))?;
+            tokio::fs::write(&chunk_path, &bytes).await.map_err(|e| format!("Chunk {} write failed: {}", i, e))?;
+            Ok::<(usize, PathBuf), String>((i, chunk_path))
+        }));
+    }
+
+    let mut chunk_files: Vec<Option<PathBuf>> = vec![None; total_chunks];
+    for handle in handles {
+        match handle.await {
+            Ok(Ok((idx, path))) => chunk_files[idx] = Some(path),
+            Ok(Err(e)) => return Err(e),
+            Err(e) => return Err(format!("Task join error: {}", e)),
+        }
+    }
+
+    let mut out_file = tokio::fs::File::create(dest_path).await.map_err(|e| format!("Failed to create output file: {}", e))?;
+
+    for (i, chunk_file) in chunk_files.into_iter().enumerate() {
+        if let Some(chunk_path) = chunk_file {
+            let data = tokio::fs::read(&chunk_path).await.map_err(|e| format!("Failed to read chunk {}: {}", i, e))?;
+            out_file.write_all(&data).await.map_err(|e| format!("Failed to write chunk {} to output: {}", i, e))?;
+            let _ = tokio::fs::remove_file(&chunk_path).await;
+        }
+    }
+
+    out_file.flush().await.map_err(|e| format!("Failed to flush output: {}", e))?;
+    Ok(())
+}
+
+async fn single_upload(file_path: &Path, upload_url: &str, client: &reqwest::Client) -> Result<(), String> {
+    let data = tokio::fs::read(file_path).await.map_err(|e| format!("Failed to read file: {}", e))?;
+    let file_name = file_path.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let form = reqwest::multipart::Form::new()
+        .part("file", reqwest::multipart::Part::bytes(data).file_name(file_name));
+
+    let resp = client.post(upload_url).multipart(form).send().await.map_err(|e| format!("Failed to send file: {}", e))?;
+
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("Upload failed with status: {}", resp.status()))
+    }
+}
+
+async fn chunked_upload(file_path: &Path, upload_url: &str, client: &reqwest::Client, chunk_size: usize, max_concurrent: usize) -> Result<(), String> {
+    let metadata = tokio::fs::metadata(file_path).await.map_err(|e| format!("Failed to get file metadata: {}", e))?;
+    let file_size = metadata.len() as usize;
+
+    if file_size <= chunk_size {
+        return single_upload(file_path, upload_url, client).await;
+    }
+
+    let total_chunks = file_size.div_ceil(chunk_size);
+    let filename = file_path.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let chunked_base = upload_url.replace("/client-upload/", "/chunked-upload/");
+
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
+    let mut handles = Vec::with_capacity(total_chunks);
+
+    for i in 0..total_chunks {
+        let start = i * chunk_size;
+        let end = std::cmp::min(start + chunk_size, file_size);
+        let chunk_url = format!("{}/chunk/{}", chunked_base, i);
+
+        let client = client.clone();
+        let fp = file_path.to_path_buf();
+        let sem = semaphore.clone();
+
+        handles.push(tokio::spawn(async move {
+            let _permit = sem.acquire().await.map_err(|e| format!("Semaphore error: {}", e))?;
+
+            let mut file = tokio::fs::File::open(&fp).await.map_err(|e| format!("Failed to open file for chunk {}: {}", i, e))?;
+            file.seek(SeekFrom::Start(start as u64)).await.map_err(|e| format!("Failed to seek for chunk {}: {}", i, e))?;
+
+            let chunk_size_bytes = end - start;
+            let mut chunk_data = vec![0u8; chunk_size_bytes];
+            file.read_exact(&mut chunk_data).await.map_err(|e| format!("Failed to read chunk {}: {}", i, e))?;
+
+            let resp = client.put(&chunk_url)
+                .header("Content-Type", "application/octet-stream")
+                .body(chunk_data)
+                .send()
+                .await
+                .map_err(|e| format!("Chunk {} upload failed: {}", i, e))?;
+
+            if !resp.status().is_success() {
+                return Err::<usize, String>(format!("Chunk {} upload failed with status: {}", i, resp.status()));
+            }
+
+            Ok::<usize, String>(i)
+        }));
+    }
+
+    for handle in handles {
+        match handle.await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => return Err(e),
+            Err(e) => return Err(format!("Task join error: {}", e)),
+        }
+    }
+
+    let complete_url = format!("{}/complete", chunked_base);
+    let complete_body = serde_json::json!({
+        "filename": filename,
+        "total_chunks": total_chunks,
+    });
+
+    let resp = client.post(&complete_url)
+        .json(&complete_body)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to complete chunked upload: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Complete chunked upload failed with status: {}", resp.status()));
+    }
+
+    Ok(())
+}
+
+pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool, chunk_size: usize, max_concurrent: usize) -> CommandResult {
     match cmd {
         CommandPayload::ShellExec { cmd, args } => {
             info!("Executing shell command: {} {:?}", cmd, args);
@@ -267,123 +479,45 @@ pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool) -> CommandR
         }
         CommandPayload::DownloadFile { url, dest_path } => {
             info!("Downloading file from {} to {}", url, dest_path);
-            let client = match reqwest::Client::builder()
-                .danger_accept_invalid_certs(tls_insecure)
-                .timeout(std::time::Duration::from_secs(3600)) // 1 hour timeout for large files
-                .build() {
-                    Ok(c) => c,
-                    Err(e) => return CommandResult::Error(format!("Failed to build http client: {}", e)),
-                };
+            let client = match build_http_client(tls_insecure) {
+                Ok(c) => c,
+                Err(e) => return CommandResult::Error(e),
+            };
+            let dest = expand_path(&dest_path);
 
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    if resp.status().is_success() {
-                        match resp.bytes().await {
-                            Ok(bytes) => {
-                                match tokio::fs::write(&dest_path, bytes.clone()).await {
-                                    Ok(_) => {
-                                        info!("Download successful: {}", dest_path);
-                                        CommandResult::Success(format!("File downloaded to {}", dest_path))
-                                    },
-                                    Err(e) => {
-                                        error!("Failed to write file: {}", e);
-                                        // Try to create parent directories if they don't exist
-                                        if let Some(parent) = std::path::Path::new(&dest_path).parent() {
-                                            if let Err(dir_err) = tokio::fs::create_dir_all(parent).await {
-                                                error!("Failed to create directories: {}", dir_err);
-                                                return CommandResult::Error(format!("Failed to create directories: {} (Original error: {})", dir_err, e));
-                                            }
-                                            // Retry write
-                                            match tokio::fs::write(&dest_path, bytes).await {
-                                                Ok(_) => {
-                                                    info!("Download successful after creating dirs: {}", dest_path);
-                                                    CommandResult::Success(format!("File downloaded to {}", dest_path))
-                                                },
-                                                Err(retry_err) => {
-                                                    error!("Failed to write file after creating dirs: {}", retry_err);
-                                                    CommandResult::Error(format!("Failed to write file after creating dirs: {}", retry_err))
-                                                },
-                                            }
-                                        } else {
-                                            CommandResult::Error(format!("Failed to write file: {}", e))
-                                        }
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                error!("Failed to read bytes: {}", e);
-                                CommandResult::Error(format!("Failed to read bytes: {}", e))
-                            },
-                        }
-                    } else {
-                        error!("Download failed with status: {}", resp.status());
-                        CommandResult::Error(format!("Download failed with status: {}", resp.status()))
-                    }
-                }
-                Err(e) => {
-                    error!("Request failed: {:?}", e);
-                    CommandResult::Error(format!("Request failed: {:?}", e))
-                },
+            match chunked_download(&url, &dest, &client, chunk_size, max_concurrent).await {
+                Ok(_) => CommandResult::Success(format!("File downloaded to {}", dest_path)),
+                Err(e) => CommandResult::Error(e),
             }
         }
         CommandPayload::UploadFile { src_path, upload_url } => {
-            // Ensure path is absolute or relative to current CWD
-            let path = PathBuf::from(&src_path);
-            let abs_path = if path.is_absolute() {
-                path
+            let expanded = expand_path(&src_path);
+            let abs_path = if expanded.is_absolute() {
+                expanded
             } else {
-                std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(path)
+                std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(&expanded)
             };
-            
+
             info!("Uploading file {} to {}", abs_path.display(), upload_url);
-            match tokio::fs::read(&abs_path).await {
-                Ok(data) => {
-                    let client = match reqwest::Client::builder()
-                        .danger_accept_invalid_certs(tls_insecure)
-                        .timeout(std::time::Duration::from_secs(3600))
-                        .build() {
-                            Ok(c) => c,
-                            Err(e) => return CommandResult::Error(format!("Failed to build http client: {}", e)),
-                        };
-                    let file_name = std::path::Path::new(&abs_path)
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or("unknown".to_string());
-                        
-                    let form = reqwest::multipart::Form::new()
-                        .part("file", reqwest::multipart::Part::bytes(data).file_name(file_name));
-                        
-                    match client.post(&upload_url).multipart(form).send().await {
-                        Ok(resp) => {
-                            if resp.status().is_success() {
-                                info!("Upload successful");
-                                CommandResult::Success("File uploaded successfully".to_string())
-                            } else {
-                                error!("Upload failed with status: {}", resp.status());
-                                CommandResult::Error(format!("Upload failed with status: {}", resp.status()))
-                            }
-                        }
-                        Err(e) => {
-                            error!("Failed to send file: {}", e);
-                            CommandResult::Error(format!("Failed to send file: {}", e))
-                        },
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to read file: {}", e);
-                    CommandResult::Error(format!("Failed to read file: {}", e))
-                },
+            let client = match build_http_client(tls_insecure) {
+                Ok(c) => c,
+                Err(e) => return CommandResult::Error(e),
+            };
+
+            match chunked_upload(&abs_path, &upload_url, &client, chunk_size, max_concurrent).await {
+                Ok(_) => CommandResult::Success("File uploaded successfully".to_string()),
+                Err(e) => CommandResult::Error(e),
             }
         }
         CommandPayload::UpdateClient { url } => {
             info!("Updating client from {}", url);
-            match download_and_replace(&url).await {
+            let tls = tls_insecure;
+            let chunk = chunk_size;
+            let max_conc = max_concurrent;
+            match download_and_replace(&url, tls, chunk, max_conc).await {
                 Ok(_) => {
-                    // This line might not be reached if replacement kills the process immediately,
-                    // but usually self-replace allows graceful exit or we should exit manually.
                     info!("Client updated, restarting...");
                     std::process::exit(0);
-                    // CommandResult::Success("Client updated and restarting...".to_string())
                 }
                 Err(e) => {
                     error!("Update failed: {}", e);
@@ -393,7 +527,8 @@ pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool) -> CommandR
         }
         CommandPayload::ReadFile { path } => {
             info!("Reading file: {}", path);
-            match tokio::fs::read(&path).await {
+            let expanded = expand_path(&path);
+            match tokio::fs::read(&expanded).await {
                 Ok(bytes) => {
                     // Try UTF-8 first
                     let (cow, _, had_errors) = encoding_rs::UTF_8.decode(&bytes);
@@ -413,7 +548,8 @@ pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool) -> CommandR
         }
         CommandPayload::WriteFile { path, content } => {
             info!("Writing file: {}", path);
-            match tokio::fs::write(&path, content).await {
+            let expanded = expand_path(&path);
+            match tokio::fs::write(&expanded, content).await {
                 Ok(_) => {
                     info!("File written successfully");
                     CommandResult::Success("File saved successfully".to_string())
@@ -426,102 +562,63 @@ pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool) -> CommandR
         }
         CommandPayload::DownloadAndUnzip { url, dest_path } => {
             info!("Downloading and unzipping from {} to {}", url, dest_path);
-            let client = match reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(3600))
-                .build() {
-                    Ok(c) => c,
-                    Err(e) => return CommandResult::Error(format!("Failed to build http client: {}", e)),
-                };
+            let client = match build_http_client(tls_insecure) {
+                Ok(c) => c,
+                Err(e) => return CommandResult::Error(e),
+            };
 
-            match client.get(&url).send().await {
-                Ok(resp) => {
-                    if resp.status().is_success() {
-                        match resp.bytes().await {
-                            Ok(bytes) => {
-                                let temp_dir = std::env::temp_dir();
-                                let temp_zip = temp_dir.join(format!("roam_download_{}.zip", uuid::Uuid::new_v4()));
-                                
-                                if let Err(e) = tokio::fs::write(&temp_zip, &bytes).await {
-                                     return CommandResult::Error(format!("Failed to write temp zip: {}", e));
-                                }
-                                
-                                let dest = PathBuf::from(&dest_path);
-                                let temp_zip_clone = temp_zip.clone();
-                                
-                                let res = tokio::task::spawn_blocking(move || {
-                                    unzip_file(&temp_zip_clone, &dest)
-                                }).await;
-                                
-                                // Clean up temp file
-                                let _ = tokio::fs::remove_file(&temp_zip).await;
-                                
-                                match res {
-                                    Ok(Ok(_)) => CommandResult::Success(format!("Directory downloaded and unzipped to {}", dest_path)),
-                                    Ok(Err(e)) => CommandResult::Error(format!("Failed to unzip: {}", e)),
-                                    Err(e) => CommandResult::Error(format!("Join error: {}", e)),
-                                }
-                            }
-                            Err(e) => CommandResult::Error(format!("Failed to read bytes: {}", e)),
-                        }
-                    } else {
-                        CommandResult::Error(format!("Download failed with status: {}", resp.status()))
-                    }
-                }
-                Err(e) => CommandResult::Error(format!("Request failed: {}", e)),
+            let temp_dir = std::env::temp_dir();
+            let temp_zip = temp_dir.join(format!("roam_download_{}.zip", uuid::Uuid::new_v4()));
+
+            if let Err(e) = chunked_download(&url, &temp_zip, &client, chunk_size, max_concurrent).await {
+                return CommandResult::Error(format!("Download failed: {}", e));
+            }
+
+            let dest = expand_path(&dest_path);
+            let temp_zip_clone = temp_zip.clone();
+
+            let res = tokio::task::spawn_blocking(move || {
+                unzip_file(&temp_zip_clone, &dest)
+            }).await;
+
+            let _ = tokio::fs::remove_file(&temp_zip).await;
+
+            match res {
+                Ok(Ok(_)) => CommandResult::Success(format!("Directory downloaded and unzipped to {}", dest_path)),
+                Ok(Err(e)) => CommandResult::Error(format!("Failed to unzip: {}", e)),
+                Err(e) => CommandResult::Error(format!("Join error: {}", e)),
             }
         }
         CommandPayload::ZipAndUpload { src_path, upload_url } => {
             info!("Zipping and uploading {} to {}", src_path, upload_url);
-            let src = PathBuf::from(&src_path);
+            let src = expand_path(&src_path);
             if !src.exists() || !src.is_dir() {
                 return CommandResult::Error(format!("Source directory does not exist or is not a directory: {}", src_path));
             }
-            
+
             let temp_dir = std::env::temp_dir();
             let temp_zip = temp_dir.join(format!("roam_upload_{}.zip", uuid::Uuid::new_v4()));
             let temp_zip_clone = temp_zip.clone();
             let src_clone = src.clone();
-            
+
             let zip_res = tokio::task::spawn_blocking(move || {
                 zip_directory(&src_clone, &temp_zip_clone)
             }).await;
-            
+
             match zip_res {
                 Ok(Ok(_)) => {
-                    // Read zip file
-                    match tokio::fs::read(&temp_zip).await {
-                        Ok(data) => {
-                             let client = match reqwest::Client::builder()
-                                .timeout(std::time::Duration::from_secs(3600))
-                                .build() {
-                                    Ok(c) => c,
-                                    Err(e) => return CommandResult::Error(format!("Failed to build http client: {}", e)),
-                                };
-                            
-                            let file_name = format!("{}.zip", src.file_name().unwrap_or_default().to_string_lossy());
-                            let form = reqwest::multipart::Form::new()
-                                .part("file", reqwest::multipart::Part::bytes(data).file_name(file_name));
-                                
-                            let upload_res = match client.post(&upload_url).multipart(form).send().await {
-                                Ok(resp) => {
-                                    if resp.status().is_success() {
-                                        CommandResult::Success("Directory zipped and uploaded successfully".to_string())
-                                    } else {
-                                        CommandResult::Error(format!("Upload failed with status: {}", resp.status()))
-                                    }
-                                }
-                                Err(e) => CommandResult::Error(format!("Failed to send file: {}", e)),
-                            };
-                            
-                            // Cleanup
-                            let _ = tokio::fs::remove_file(&temp_zip).await;
-                            upload_res
-                        }
-                        Err(e) => {
-                            let _ = tokio::fs::remove_file(&temp_zip).await;
-                            CommandResult::Error(format!("Failed to read temp zip: {}", e))
-                        }
-                    }
+                    let client = match build_http_client(tls_insecure) {
+                        Ok(c) => c,
+                        Err(e) => return CommandResult::Error(e),
+                    };
+
+                    let result = match chunked_upload(&temp_zip, &upload_url, &client, chunk_size, max_concurrent).await {
+                        Ok(_) => CommandResult::Success("Directory zipped and uploaded successfully".to_string()),
+                        Err(e) => CommandResult::Error(format!("Upload failed: {}", e)),
+                    };
+
+                    let _ = tokio::fs::remove_file(&temp_zip).await;
+                    result
                 }
                 Ok(Err(e)) => CommandResult::Error(format!("Failed to zip directory: {}", e)),
                 Err(e) => CommandResult::Error(format!("Join error: {}", e)),
@@ -529,8 +626,8 @@ pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool) -> CommandR
         }
         CommandPayload::CopyFile { src_path, dest_path } => {
             info!("Copying file from {} to {}", src_path, dest_path);
-            let src = PathBuf::from(&src_path);
-            let dest = PathBuf::from(&dest_path);
+            let src = expand_path(&src_path);
+            let dest = expand_path(&dest_path);
             
             if src.is_dir() {
                  // Copy dir recursively? std::fs::copy is only for files.
@@ -576,14 +673,16 @@ pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool) -> CommandR
         }
         CommandPayload::MoveFile { src_path, dest_path } => {
             info!("Moving file from {} to {}", src_path, dest_path);
-            match std::fs::rename(&src_path, &dest_path) {
+            let src_expanded = expand_path(&src_path);
+            let dest_expanded = expand_path(&dest_path);
+            match std::fs::rename(&src_expanded, &dest_expanded) {
                 Ok(_) => CommandResult::Success(format!("Moved from {} to {}", src_path, dest_path)),
                 Err(e) => CommandResult::Error(format!("Failed to move: {}", e)),
             }
         }
         CommandPayload::DeleteFile { path } => {
             info!("Deleting {}", path);
-            let p = PathBuf::from(&path);
+            let p = expand_path(&path);
             if p.is_dir() {
                 match std::fs::remove_dir_all(&p) {
                     Ok(_) => CommandResult::Success(format!("Directory deleted: {}", path)),
@@ -596,24 +695,63 @@ pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool) -> CommandR
                 }
             }
         }
+        CommandPayload::HttpRequest { method, url, headers, query_params, body } => {
+            info!("Sending HTTP request: {} {}", method, url);
+            let client = match build_http_client(tls_insecure) {
+                Ok(c) => c,
+                Err(e) => return CommandResult::Error(e),
+            };
+
+            let http_method = reqwest::Method::from_bytes(method.as_bytes())
+                .unwrap_or(reqwest::Method::GET);
+
+            let mut req = client.request(http_method, &url);
+
+            for h in &headers {
+                req = req.header(&h.key, &h.value);
+            }
+
+            for qp in &query_params {
+                req = req.query(&[(qp.key.clone(), qp.value.clone())]);
+            }
+
+            if let Some(b) = &body {
+                req = req.body(b.clone());
+            }
+
+            match req.send().await {
+                Ok(resp) => {
+                    let status = resp.status().as_u16();
+                    let resp_headers: Vec<KeyValuePair> = resp.headers().iter()
+                        .map(|(k, v)| KeyValuePair {
+                            key: k.to_string(),
+                            value: v.to_str().unwrap_or("").to_string(),
+                        })
+                        .collect();
+                    let body_text = resp.text().await.unwrap_or_default();
+                    let resp_headers_str: Vec<String> = resp_headers.iter()
+                        .map(|h| format!("{}: {}", h.key, h.value))
+                        .collect();
+                    CommandResult::Success(format!(
+                        "HTTP {} {}\n\nStatus: {}\n\nResponse Headers:\n{}\n\nBody:\n{}",
+                        method, url, status, resp_headers_str.join("\n"), body_text
+                    ))
+                }
+                Err(e) => CommandResult::Error(format!("HTTP request failed: {}", e)),
+            }
+        }
     }
 }
 
-async fn download_and_replace(url: &str) -> anyhow::Result<()> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(3600))
-        .build()?;
-    let response = client.get(url).send().await?;
-    let bytes = response.bytes().await?;
-    
+async fn download_and_replace(url: &str, tls_insecure: bool, chunk_size: usize, max_concurrent: usize) -> anyhow::Result<()> {
+    let client = build_http_client(tls_insecure).map_err(|e| anyhow::anyhow!(e))?;
+
     let mut temp_file = std::env::temp_dir();
     temp_file.push("roam_client_update");
-    // Append random string to avoid conflicts? 
-    // Ideally use tempfile crate but we want simplicity.
-    // Let's just overwrite.
-    
-    fs::write(&temp_file, bytes)?;
-    
+
+    chunked_download(url, &temp_file, &client, chunk_size, max_concurrent).await
+        .map_err(|e| anyhow::anyhow!("Download failed: {}", e))?;
+
     // Make executable on unix
     #[cfg(unix)]
     {
@@ -624,11 +762,9 @@ async fn download_and_replace(url: &str) -> anyhow::Result<()> {
     }
 
     self_replace::self_replace(&temp_file)?;
-    
-    // Cleanup temp file
+
     let _ = fs::remove_file(&temp_file);
-    
-    // Restart process
+
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -636,36 +772,30 @@ async fn download_and_replace(url: &str) -> anyhow::Result<()> {
         let mut command = std::process::Command::new(&args[0]);
         command.args(&args[1..]);
         let err = command.exec();
-        // If we're here, exec failed
         anyhow::bail!("Failed to restart process: {}", err);
     }
 
     #[cfg(windows)]
     {
-        // Check if running as service (set in service.rs)
         if std::env::var("ROAM_IS_SERVICE").unwrap_or_default() == "1" {
-            // If service, just exit with error code to trigger SCM restart
-            // RestartPolicy::Always or OnFailure should handle this.
-            // We use exit code 1 to signal "failure" just in case.
             std::process::exit(1);
         }
 
-        // On Windows (non-service), self-replace works but we need to spawn new process and exit current one
         use std::os::windows::process::CommandExt;
         const DETACHED_PROCESS: u32 = 0x00000008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
 
         let args: Vec<String> = std::env::args().collect();
         let exe_path = std::env::current_exe()?;
-        
+
         std::process::Command::new(exe_path)
             .args(&args[1..])
             .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
             .spawn()?;
-            
+
         std::process::exit(0);
     }
-    
+
     #[cfg(not(any(unix, windows)))]
     {
         anyhow::bail!("Automatic restart not supported on this platform");
