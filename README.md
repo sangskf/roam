@@ -225,6 +225,6 @@ sudo ./target/release/client start
 2. 修改 `server/web/index.html` 进行前端开发（无需编译，刷新浏览器即可，但需重启服务端以加载嵌入的 HTML）。
 3. 修改 Rust 代码后需重新编译 `cargo build`。
 
-## 📄 License
+## 📄 License 
 
 MIT License
