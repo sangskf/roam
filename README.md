@@ -103,6 +103,10 @@ HEARTBEAT_INTERVAL_SEC=10
 ALIAS=MyMacBook
 # 是否跳过 TLS 证书验证 (自签名证书需设置为 true)
 TLS_INSECURE=true
+# 分片下载/上传时每个分片的大小 (字节, 默认 8MB = 8388608)
+CHUNK_SIZE=8388608
+# 分片并发传输数 (默认 4)
+MAX_CONCURRENT_TRANSFERS=4
 # 日志级别
 RUST_LOG=client=debug
 ```
