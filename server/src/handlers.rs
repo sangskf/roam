@@ -17,7 +17,7 @@ use sha2::{Sha256, Digest};
 use hex;
 
 use crate::state::{AppState, ClientConnection, ScriptGroup, ScriptStep, ExecutionProgress};
-use common::{Message, CommandPayload, CommandResult};
+use common::{Message, CommandPayload, CommandResult, FileInfo};
 
 #[allow(dead_code)]
 pub async fn index() -> &'static str {
@@ -488,6 +488,140 @@ fn expand_path(path: &str) -> String {
     path.to_string()
 }
 
+async fn execute_command_locally(cmd: CommandPayload) -> CommandResult {
+    match cmd {
+        CommandPayload::ShellExec { cmd, args } => {
+            let full_cmd = if args.is_empty() {
+                cmd
+            } else {
+                format!("{} {}", cmd, args.join(" "))
+            };
+            match tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg(&full_cmd)
+                .output()
+                .await
+            {
+                Ok(output) => CommandResult::ShellOutput {
+                    stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                    stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                    exit_code: output.status.code().unwrap_or(-1),
+                    cwd: std::env::current_dir().map(|d| d.to_string_lossy().to_string()).unwrap_or_default(),
+                },
+                Err(e) => CommandResult::Error(format!("Shell execution failed: {}", e)),
+            }
+        }
+        CommandPayload::CopyFile { src_path, dest_path } => {
+            fn copy_dir(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+                if !dst.exists() { std::fs::create_dir_all(dst)?; }
+                for entry in std::fs::read_dir(src)? {
+                    let entry = entry?;
+                    let ty = entry.file_type()?;
+                    let sp = entry.path();
+                    let dp = dst.join(entry.file_name());
+                    if ty.is_dir() { copy_dir(&sp, &dp)?; }
+                    else { std::fs::copy(&sp, &dp)?; }
+                }
+                Ok(())
+            }
+            let src = std::path::Path::new(&src_path);
+            let dst = std::path::Path::new(&dest_path);
+            if src.is_dir() {
+                match copy_dir(src, dst) {
+                    Ok(_) => CommandResult::Success(format!("Directory copied from {} to {}", src_path, dest_path)),
+                    Err(e) => CommandResult::Error(format!("Failed to copy directory: {}", e)),
+                }
+            } else {
+                match std::fs::copy(src, dst) {
+                    Ok(_) => CommandResult::Success(format!("File copied from {} to {}", src_path, dest_path)),
+                    Err(e) => CommandResult::Error(format!("Failed to copy file: {}", e)),
+                }
+            }
+        }
+        CommandPayload::MoveFile { src_path, dest_path } => {
+            match std::fs::rename(&src_path, &dest_path) {
+                Ok(_) => CommandResult::Success(format!("Moved from {} to {}", src_path, dest_path)),
+                Err(e) => CommandResult::Error(format!("Failed to move: {}", e)),
+            }
+        }
+        CommandPayload::DeleteFile { path } => {
+            let p = std::path::Path::new(&path);
+            if p.is_dir() {
+                match std::fs::remove_dir_all(p) {
+                    Ok(_) => CommandResult::Success(format!("Directory deleted: {}", path)),
+                    Err(e) => CommandResult::Error(format!("Failed to delete directory: {}", e)),
+                }
+            } else {
+                match std::fs::remove_file(p) {
+                    Ok(_) => CommandResult::Success(format!("File deleted: {}", path)),
+                    Err(e) => CommandResult::Error(format!("Failed to delete file: {}", e)),
+                }
+            }
+        }
+        CommandPayload::HttpRequest { method, url, headers, query_params, body } => {
+            let client = match reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(300))
+                .build()
+            {
+                Ok(c) => c,
+                Err(e) => return CommandResult::Error(format!("Failed to build HTTP client: {}", e)),
+            };
+            let http_method = reqwest::Method::from_bytes(method.as_bytes()).unwrap_or(reqwest::Method::GET);
+            let mut req = client.request(http_method, &url);
+            for h in &headers { req = req.header(&h.key, &h.value); }
+            for qp in &query_params { req = req.query(&[(qp.key.clone(), qp.value.clone())]); }
+            if let Some(b) = &body { req = req.body(b.clone()); }
+            match req.send().await {
+                Ok(resp) => {
+                    let status = resp.status().as_u16();
+                    let body_text = resp.text().await.unwrap_or_default();
+                    CommandResult::Success(format!("HTTP {} {}\n\nStatus: {}\n\nBody:\n{}", method, url, status, body_text))
+                }
+                Err(e) => CommandResult::Error(format!("HTTP request failed: {}", e)),
+            }
+        }
+        CommandPayload::ReadFile { path } => {
+            match tokio::fs::read_to_string(&path).await {
+                Ok(content) => CommandResult::FileContent { content },
+                Err(e) => CommandResult::Error(format!("Failed to read file: {}", e)),
+            }
+        }
+        CommandPayload::WriteFile { path, content } => {
+            match tokio::fs::write(&path, &content).await {
+                Ok(_) => CommandResult::Success("File saved successfully".to_string()),
+                Err(e) => CommandResult::Error(format!("Failed to write file: {}", e)),
+            }
+        }
+        CommandPayload::ListDir { path } => {
+            match std::fs::read_dir(&path) {
+                Ok(entries) => {
+                    let mut files = Vec::new();
+                    for entry in entries.flatten() {
+                        let metadata = entry.metadata().ok();
+                        let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+                        let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+                        let modified = metadata.as_ref().and_then(|m| m.modified().ok())
+                            .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs());
+                        files.push(FileInfo {
+                            name: entry.file_name().to_string_lossy().to_string(),
+                            is_dir, size, modified,
+                        });
+                    }
+                    CommandResult::FileList { files }
+                }
+                Err(e) => CommandResult::Error(format!("Failed to read dir: {}", e)),
+            }
+        }
+        CommandPayload::ChangeDir { path } => {
+            match std::env::set_current_dir(&path) {
+                Ok(_) => CommandResult::DirChanged { new_path: path },
+                Err(e) => CommandResult::Error(format!("Failed to change dir: {}", e)),
+            }
+        }
+        _ => CommandResult::Error("This command type is not supported for server-side execution".to_string()),
+    }
+}
+
 async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGroup, history_id: Uuid, server_host: String) {
     info!("Starting script {} on client {}", script.name, client_id);
     
@@ -522,7 +656,7 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
         let base_url = get_download_base_url(&state, Some(client_id), Some(&server_host));
 
         let cmd_payload_result = match step {
-            ScriptStep::Shell { cmd, args } => Ok(CommandPayload::ShellExec { cmd: cmd.clone(), args: args.clone() }),
+            ScriptStep::Shell { cmd, args, .. } => Ok(CommandPayload::ShellExec { cmd: cmd.clone(), args: args.clone() }),
             ScriptStep::Upload { local_path, remote_path, local_path_is_absolute, .. } => {
                 if local_path_is_absolute.unwrap_or(false) {
                     let expanded = expand_path(local_path);
@@ -616,7 +750,7 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
         };
 
         let step_desc = match step {
-            ScriptStep::Shell { cmd, args } => format!("Shell: {} {}", cmd, args.join(" ")),
+            ScriptStep::Shell { cmd, args, .. } => format!("Shell: {} {}", cmd, args.join(" ")),
             ScriptStep::Upload { local_path, remote_path, .. } => format!("Upload: {} -> {}", local_path, remote_path),
             ScriptStep::Download { remote_path, .. } => format!("Download: {}", remote_path),
             ScriptStep::UploadDir { local_path, remote_path, .. } => format!("UploadDir: {} -> {}", local_path, remote_path),
@@ -625,6 +759,12 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
             ScriptStep::Move { src_path, dest_path, .. } => format!("Move: {} -> {}", src_path, dest_path),
             ScriptStep::Delete { path, .. } => format!("Delete: {}", path),
             ScriptStep::HttpRequest { url, method, .. } => format!("HttpRequest: {} {}", method.clone().unwrap_or_else(|| "GET".to_string()), url),
+        };
+
+        let step_desc = if step.is_run_on_server() {
+            format!("{} [Server]", step_desc)
+        } else {
+            step_desc
         };
         
         let log_start = format!("Step {}: Started - {}", i + 1, step_desc);
@@ -643,7 +783,37 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
              break;
         }
         let cmd_payload = cmd_payload_result.unwrap();
-        
+
+        // Server-side execution
+        if step.is_run_on_server() {
+            let result = execute_command_locally(cmd_payload).await;
+            let mut step_success = false;
+            let log_res = match result {
+                CommandResult::Error(e) => format!("Step {}: Failed: {}", i + 1, e),
+                CommandResult::ShellOutput { stdout, stderr, exit_code, .. } => {
+                    if exit_code != 0 {
+                        format!("Step {}: Shell command failed (Exit Code: {}). Stderr: {}", i + 1, exit_code, stderr)
+                    } else {
+                        step_success = true;
+                        format!("Step {}: Completed. Output: {}", i + 1, stdout)
+                    }
+                }
+                res => {
+                    step_success = true;
+                    format!("Step {}: Completed. Result: {:?}", i + 1, res)
+                }
+            };
+            logs.push(log_res.clone());
+            if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
+                progress.logs.push(log_res);
+            }
+            if !step_success {
+                success = false;
+                break;
+            }
+            continue;
+        }
+
         // Send command
         if let Some(client) = state.clients.get(&client_id) {
             let cmd_id = Uuid::new_v4();

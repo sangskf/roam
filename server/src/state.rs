@@ -50,38 +50,48 @@ pub struct ScriptGroup {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", content = "payload")]
 pub enum ScriptStep {
-    Shell { cmd: String, args: Vec<String> },
+    Shell {
+        cmd: String, args: Vec<String>,
+        #[serde(default)] run_on_server: Option<bool>,
+    },
     Upload {
         local_path: String, remote_path: String,
         #[serde(default)] local_path_is_absolute: Option<bool>,
         #[serde(default)] remote_path_is_absolute: Option<bool>,
+        #[serde(default)] run_on_server: Option<bool>,
     },
     Download {
         remote_path: String, browser_download: Option<bool>,
         #[serde(default)] remote_path_is_absolute: Option<bool>,
+        #[serde(default)] run_on_server: Option<bool>,
     },
     UploadDir {
         local_path: String, remote_path: String,
         #[serde(default)] local_path_is_absolute: Option<bool>,
         #[serde(default)] remote_path_is_absolute: Option<bool>,
+        #[serde(default)] run_on_server: Option<bool>,
     },
     DownloadDir {
         remote_path: String, browser_download: Option<bool>,
         #[serde(default)] remote_path_is_absolute: Option<bool>,
+        #[serde(default)] run_on_server: Option<bool>,
     },
     Copy {
         src_path: String, dest_path: String,
         #[serde(default)] src_path_is_absolute: Option<bool>,
         #[serde(default)] dest_path_is_absolute: Option<bool>,
+        #[serde(default)] run_on_server: Option<bool>,
     },
     Move {
         src_path: String, dest_path: String,
         #[serde(default)] src_path_is_absolute: Option<bool>,
         #[serde(default)] dest_path_is_absolute: Option<bool>,
+        #[serde(default)] run_on_server: Option<bool>,
     },
     Delete {
         path: String,
         #[serde(default)] path_is_absolute: Option<bool>,
+        #[serde(default)] run_on_server: Option<bool>,
     },
     HttpRequest {
         url: String,
@@ -89,6 +99,7 @@ pub enum ScriptStep {
         #[serde(default)] headers: Option<Vec<KeyValuePair>>,
         #[serde(default)] query_params: Option<Vec<KeyValuePair>>,
         #[serde(default)] body: Option<String>,
+        #[serde(default)] run_on_server: Option<bool>,
     },
 }
 
@@ -102,6 +113,22 @@ impl AppState {
             active_executions: DashMap::new(),
             web_sessions: DashMap::new(),
             config,
+        }
+    }
+}
+
+impl ScriptStep {
+    pub fn is_run_on_server(&self) -> bool {
+        match self {
+            ScriptStep::Shell { run_on_server, .. }
+            | ScriptStep::Upload { run_on_server, .. }
+            | ScriptStep::Download { run_on_server, .. }
+            | ScriptStep::UploadDir { run_on_server, .. }
+            | ScriptStep::DownloadDir { run_on_server, .. }
+            | ScriptStep::Copy { run_on_server, .. }
+            | ScriptStep::Move { run_on_server, .. }
+            | ScriptStep::Delete { run_on_server, .. }
+            | ScriptStep::HttpRequest { run_on_server, .. } => run_on_server.unwrap_or(false),
         }
     }
 }

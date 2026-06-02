@@ -926,6 +926,10 @@
                                             <option value="Delete">{{ t('delete') }}</option>
                                             <option value="HttpRequest">{{ t('httpRequest') }}</option>
                                         </select>
+                                        <label class="flex items-center gap-1 mt-2 text-xs text-gray-500 cursor-pointer">
+                                            <input type="checkbox" v-model="step.run_on_server" class="h-3 w-3">
+                                            {{ t('runOnServer') }}
+                                        </label>
                                     </div>
                                     <div class="flex-1">
                                         <div v-if="step.type === 'Shell'">
@@ -1838,6 +1842,7 @@
                         browserDownload: 'Direct Browser Download',
                         uploadDir: 'Upload Directory',
                         downloadDir: 'Download Directory',
+                        runOnServer: 'Server',
                         updates: 'Updates',
                         httpRequest: 'HTTP Request',
                         searchPlaceholder: 'Search hostname, alias, IP...',
@@ -2073,6 +2078,7 @@
                         browserDownload: '使用浏览器直接下载',
                         uploadDir: '上传文件夹',
                         downloadDir: '下载文件夹',
+                        runOnServer: '服务端',
                         updates: '更新管理',
                         httpRequest: 'HTTP 请求',
                         searchPlaceholder: '搜索主机名、别名、IP...',
@@ -3335,7 +3341,14 @@
                             }
                             return s
                         })
-                        
+
+                        // Copy run_on_server from original payload
+                        rawScript.steps.forEach((s, idx) => {
+                            if (idx < steps.length && s.payload) {
+                                steps[idx].run_on_server = s.payload.run_on_server || false;
+                            }
+                        })
+
                         newScript.value = { name: rawScript.name, steps }
                     } else {
                         isCreatingScript.value = true
@@ -3345,7 +3358,7 @@
                 }
 
                 const addStep = () => {
-                    newScript.value.steps.push({ type: 'Shell', cmd: '', args: '', local_path: '', remote_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path_is_absolute: false, dest_path_is_absolute: false, path_is_absolute: false, url: '', method: 'GET', headers: [], query_params: [], body: '' })
+                    newScript.value.steps.push({ type: 'Shell', cmd: '', args: '', local_path: '', remote_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path_is_absolute: false, dest_path_is_absolute: false, path_is_absolute: false, url: '', method: 'GET', headers: [], query_params: [], body: '', run_on_server: false })
                 }
 
                 const removeStep = (index) => {
@@ -3389,6 +3402,13 @@
                         }
                         return null
                     }).filter(s => s)
+
+                    // Copy run_on_server to payload
+                    newScript.value.steps.forEach((s, idx) => {
+                        if (idx < steps.length && steps[idx]) {
+                            steps[idx].payload.run_on_server = s.run_on_server || false;
+                        }
+                    })
 
                     const payload = { name: newScript.value.name, steps }
                     
