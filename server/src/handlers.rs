@@ -12,6 +12,7 @@ use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 use tracing::{info, error, warn};
 use std::net::SocketAddr;
+use std::time::Duration;
 use sqlx::Row;
 use sha2::{Sha256, Digest};
 use hex;
@@ -1693,23 +1694,51 @@ pub async fn trigger_update_clients(
 
     let host_header = headers.get("host").and_then(|h| h.to_str().ok());
 
-    let mut count = 0;
+    let mut targets: Vec<(mpsc::Sender<Message>, String)> = Vec::new();
     for client_id in payload.client_ids {
         if let Some(client) = state.clients.get(&client_id) {
              let base_url = get_download_base_url(&state, Some(client_id), host_header);
              let download_url = format!("{}/api/files/download/updates/{}", base_url, update.filename);
-             
-             let cmd_id = Uuid::new_v4();
-             let msg = Message::Command {
-                id: cmd_id,
-                cmd: CommandPayload::UpdateClient { url: download_url },
-            };
-            let _ = client.tx.send(msg).await;
-            count += 1;
+             targets.push((client.tx.clone(), download_url));
         }
     }
-    
-    (StatusCode::OK, format!("Update triggered for {} clients", count)).into_response()
+
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(10));
+    let mut handles = Vec::with_capacity(targets.len());
+
+    for (tx, download_url) in targets {
+        let sem = semaphore.clone();
+        handles.push(tokio::spawn(async move {
+            let _permit = sem.acquire().await.map_err(|_| "Semaphore error".to_string())?;
+            let msg = Message::Command {
+                id: Uuid::new_v4(),
+                cmd: CommandPayload::UpdateClient { url: download_url },
+            };
+            match tokio::time::timeout(Duration::from_secs(10), tx.send(msg)).await {
+                Ok(Ok(())) => Ok::<_, String>(()),
+                Ok(Err(_)) => Err("Channel closed".to_string()),
+                Err(_) => Err("Timeout".to_string()),
+            }
+        }));
+    }
+
+    let total = handles.len();
+    let mut success = 0;
+    let mut errors: Vec<String> = Vec::new();
+    for handle in handles {
+        match handle.await {
+            Ok(Ok(())) => success += 1,
+            Ok(Err(e)) => errors.push(e),
+            Err(e) => errors.push(format!("Join error: {}", e)),
+        }
+    }
+
+    let failed = total - success;
+    if errors.is_empty() {
+        (StatusCode::OK, format!("Update triggered for {} clients", success)).into_response()
+    } else {
+        (StatusCode::OK, format!("Update triggered: {} success, {} failed. Details: {}", success, failed, errors.join("; "))).into_response()
+    }
 }
 
 pub async fn ws_handler(
