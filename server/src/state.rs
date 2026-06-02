@@ -64,6 +64,7 @@ pub enum ScriptStep {
         remote_path: String, browser_download: Option<bool>,
         #[serde(default)] remote_path_is_absolute: Option<bool>,
         #[serde(default)] run_on_server: Option<bool>,
+        #[serde(default)] server_save_path: Option<String>,
     },
     UploadDir {
         local_path: String, remote_path: String,
@@ -75,6 +76,7 @@ pub enum ScriptStep {
         remote_path: String, browser_download: Option<bool>,
         #[serde(default)] remote_path_is_absolute: Option<bool>,
         #[serde(default)] run_on_server: Option<bool>,
+        #[serde(default)] server_save_path: Option<String>,
     },
     Copy {
         src_path: String, dest_path: String,

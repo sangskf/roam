@@ -656,6 +656,8 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
         
         let base_url = get_download_base_url(&state, Some(client_id), Some(&server_host));
 
+        let mut pending_server_save: Option<(Uuid, String)> = None;
+
         let cmd_payload_result = match step {
             ScriptStep::Shell { cmd, args, .. } => Ok(CommandPayload::ShellExec { cmd: cmd.clone(), args: args.clone() }),
             ScriptStep::Upload { local_path, remote_path, local_path_is_absolute, .. } => {
@@ -676,10 +678,16 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
                     Ok(CommandPayload::DownloadFile { url: download_url, dest_path: remote_path.clone() })
                 }
             },
-            ScriptStep::Download { remote_path, browser_download, .. } => {
+            ScriptStep::Download { remote_path, browser_download, server_save_path, .. } => {
                 let upload_id = Uuid::new_v4();
                 let upload_url = format!("{}/api/files/client-upload/{}", base_url, upload_id);
-                
+
+                if let Some(save_path) = server_save_path {
+                    if !save_path.is_empty() {
+                        pending_server_save = Some((upload_id, save_path.clone()));
+                    }
+                }
+
                 if browser_download.unwrap_or(false) {
                     let file_name = std::path::Path::new(remote_path).file_name().unwrap_or_default().to_string_lossy();
                     let download_link = format!("{}/api/files/download/client_data/{}/{}", base_url, upload_id, file_name);
@@ -689,7 +697,7 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
                         progress.logs.push(log_msg);
                     }
                 }
-                
+
                 Ok(CommandPayload::UploadFile { src_path: remote_path.clone(), upload_url })
             },
             ScriptStep::UploadDir { local_path, remote_path, local_path_is_absolute, .. } => {
@@ -713,10 +721,16 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
                     Err(e) => Err(format!("Failed to zip directory: {}", e))
                 }
             },
-            ScriptStep::DownloadDir { remote_path, browser_download, .. } => {
+            ScriptStep::DownloadDir { remote_path, browser_download, server_save_path, .. } => {
                 let upload_id = Uuid::new_v4();
                 // Client will upload a zip file, server receives it as generic file upload
                 let upload_url = format!("{}/api/files/client-upload/{}", base_url, upload_id);
+
+                if let Some(save_path) = server_save_path {
+                    if !save_path.is_empty() {
+                        pending_server_save = Some((upload_id, save_path.clone()));
+                    }
+                }
                 
                 if browser_download.unwrap_or(false) {
                     let file_name = format!("{}.zip", std::path::Path::new(remote_path).file_name().unwrap_or_default().to_string_lossy());
@@ -808,6 +822,39 @@ async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGr
             if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
                 progress.logs.push(log_res);
             }
+
+            // Handle server_save_path for Download/DownloadDir steps
+            if step_success {
+                if let Some((upload_id, save_path)) = pending_server_save.take() {
+                    let client_data_dir = format!("uploads/client_data/{}", upload_id);
+                    if let Ok(mut entries) = tokio::fs::read_dir(&client_data_dir).await {
+                        if let Ok(Some(entry)) = entries.next_entry().await {
+                            let src = entry.path();
+                            let dst = std::path::Path::new(&save_path);
+                            if let Some(parent) = dst.parent() {
+                                let _ = tokio::fs::create_dir_all(parent).await;
+                            }
+                            match tokio::fs::copy(&src, dst).await {
+                                Ok(_) => {
+                                    let log_save = format!("Step {}: File saved to server path: {}", i + 1, save_path);
+                                    logs.push(log_save.clone());
+                                    if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
+                                        progress.logs.push(log_save);
+                                    }
+                                }
+                                Err(e) => {
+                                    let log_save = format!("Step {}: Failed to save to server path {}: {}", i + 1, save_path, e);
+                                    logs.push(log_save.clone());
+                                    if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
+                                        progress.logs.push(log_save);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if !step_success {
                 success = false;
                 break;

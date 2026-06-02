@@ -956,6 +956,8 @@
                                                 <input v-model="step.remote_path" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="/etc/passwd">
                                                 <button type="button" @click="step.remote_path_is_absolute = !step.remote_path_is_absolute" class="px-2 py-1 text-xs rounded border shrink-0 whitespace-nowrap" :class="step.remote_path_is_absolute ? 'bg-orange-50 border-orange-300 text-orange-600' : 'bg-gray-50 border-gray-300 text-gray-500'">{{ step.remote_path_is_absolute ? '绝对' : '相对' }}</button>
                                             </div>
+                                            <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('serverSavePath') }}</label>
+                                            <input v-model="step.server_save_path" class="w-full border rounded px-2 py-1 text-sm mb-2" :placeholder="t('serverSavePathPlaceholder')">
                                             <label class="flex items-center text-sm">
                                                 <input type="checkbox" v-model="step.browser_download" class="mr-2">
                                                 {{ t('browserDownload') }}
@@ -979,6 +981,8 @@
                                                 <input v-model="step.remote_path" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="/var/log/app">
                                                 <button type="button" @click="step.remote_path_is_absolute = !step.remote_path_is_absolute" class="px-2 py-1 text-xs rounded border shrink-0 whitespace-nowrap" :class="step.remote_path_is_absolute ? 'bg-orange-50 border-orange-300 text-orange-600' : 'bg-gray-50 border-gray-300 text-gray-500'">{{ step.remote_path_is_absolute ? '绝对' : '相对' }}</button>
                                             </div>
+                                            <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('serverSavePath') }}</label>
+                                            <input v-model="step.server_save_path" class="w-full border rounded px-2 py-1 text-sm mb-2" :placeholder="t('serverSavePathPlaceholder')">
                                             <label class="flex items-center text-sm">
                                                 <input type="checkbox" v-model="step.browser_download" class="mr-2">
                                                 {{ t('browserDownload') }}
@@ -1840,6 +1844,8 @@
                         uploadFile: 'Upload File',
                         downloadFile: 'Download File',
                         browserDownload: 'Direct Browser Download',
+                        serverSavePath: 'Server Save Path',
+                        serverSavePathPlaceholder: 'Leave empty for default path',
                         uploadDir: 'Upload Directory',
                         downloadDir: 'Download Directory',
                         runOnServer: 'Server',
@@ -2076,6 +2082,8 @@
                         uploadFile: '上传文件',
                         downloadFile: '下载文件',
                         browserDownload: '使用浏览器直接下载',
+                        serverSavePath: '服务端保存路径',
+                        serverSavePathPlaceholder: '留空使用默认路径',
                         uploadDir: '上传文件夹',
                         downloadDir: '下载文件夹',
                         runOnServer: '服务端',
@@ -3325,11 +3333,11 @@
                             } else if (s.type === 'Upload') {
                                 return { type: 'Upload', local_path: s.payload.local_path, remote_path: s.payload.remote_path, local_path_is_absolute: s.payload.local_path_is_absolute || false, remote_path_is_absolute: s.payload.remote_path_is_absolute || false }
                             } else if (s.type === 'Download') {
-                                return { type: 'Download', remote_path: s.payload.remote_path, browser_download: s.payload.browser_download || false, remote_path_is_absolute: s.payload.remote_path_is_absolute || false }
+                                return { type: 'Download', remote_path: s.payload.remote_path, browser_download: s.payload.browser_download || false, remote_path_is_absolute: s.payload.remote_path_is_absolute || false, server_save_path: s.payload.server_save_path || '' }
                             } else if (s.type === 'UploadDir') {
                                 return { type: 'UploadDir', local_path: s.payload.local_path, remote_path: s.payload.remote_path, local_path_is_absolute: s.payload.local_path_is_absolute || false, remote_path_is_absolute: s.payload.remote_path_is_absolute || false }
                             } else if (s.type === 'DownloadDir') {
-                                return { type: 'DownloadDir', remote_path: s.payload.remote_path, browser_download: s.payload.browser_download || false, remote_path_is_absolute: s.payload.remote_path_is_absolute || false }
+                                return { type: 'DownloadDir', remote_path: s.payload.remote_path, browser_download: s.payload.browser_download || false, remote_path_is_absolute: s.payload.remote_path_is_absolute || false, server_save_path: s.payload.server_save_path || '' }
                             } else if (s.type === 'Copy') {
                                 return { type: 'Copy', src_path: s.payload.src_path, dest_path: s.payload.dest_path, src_path_is_absolute: s.payload.src_path_is_absolute || false, dest_path_is_absolute: s.payload.dest_path_is_absolute || false }
                             } else if (s.type === 'Move') {
@@ -3358,7 +3366,7 @@
                 }
 
                 const addStep = () => {
-                    newScript.value.steps.push({ type: 'Shell', cmd: '', args: '', local_path: '', remote_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path_is_absolute: false, dest_path_is_absolute: false, path_is_absolute: false, url: '', method: 'GET', headers: [], query_params: [], body: '', run_on_server: false })
+                    newScript.value.steps.push({ type: 'Shell', cmd: '', args: '', local_path: '', remote_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path_is_absolute: false, dest_path_is_absolute: false, path_is_absolute: false, url: '', method: 'GET', headers: [], query_params: [], body: '', run_on_server: false, server_save_path: '' })
                 }
 
                 const removeStep = (index) => {
@@ -3386,11 +3394,11 @@
                         } else if (s.type === 'Upload') {
                             return { type: 'Upload', payload: { local_path: s.local_path, remote_path: s.remote_path, local_path_is_absolute: s.local_path_is_absolute || false, remote_path_is_absolute: s.remote_path_is_absolute || false } }
                         } else if (s.type === 'Download') {
-                            return { type: 'Download', payload: { remote_path: s.remote_path, browser_download: s.browser_download, remote_path_is_absolute: s.remote_path_is_absolute || false } }
+                            return { type: 'Download', payload: { remote_path: s.remote_path, browser_download: s.browser_download, remote_path_is_absolute: s.remote_path_is_absolute || false, server_save_path: s.server_save_path || '' } }
                         } else if (s.type === 'UploadDir') {
                             return { type: 'UploadDir', payload: { local_path: s.local_path, remote_path: s.remote_path, local_path_is_absolute: s.local_path_is_absolute || false, remote_path_is_absolute: s.remote_path_is_absolute || false } }
                         } else if (s.type === 'DownloadDir') {
-                            return { type: 'DownloadDir', payload: { remote_path: s.remote_path, browser_download: s.browser_download, remote_path_is_absolute: s.remote_path_is_absolute || false } }
+                            return { type: 'DownloadDir', payload: { remote_path: s.remote_path, browser_download: s.browser_download, remote_path_is_absolute: s.remote_path_is_absolute || false, server_save_path: s.server_save_path || '' } }
                         } else if (s.type === 'Copy') {
                             return { type: 'Copy', payload: { src_path: s.src_path, dest_path: s.dest_path, src_path_is_absolute: s.src_path_is_absolute || false, dest_path_is_absolute: s.dest_path_is_absolute || false } }
                         } else if (s.type === 'Move') {
