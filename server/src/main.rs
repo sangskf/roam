@@ -5,6 +5,7 @@ pub mod config;
 pub mod service;
 pub mod assets;
 pub mod app;
+pub mod scheduler;
 
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};

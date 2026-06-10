@@ -16,6 +16,7 @@ use crate::config::ServerConfig;
 use crate::db;
 use crate::handlers;
 use crate::assets;
+use crate::scheduler;
 
 pub async fn run(shutdown_signal: impl std::future::Future<Output = ()> + Send + 'static) -> anyhow::Result<()> {
     // Load .env file
@@ -55,8 +56,15 @@ pub async fn run(shutdown_signal: impl std::future::Future<Output = ()> + Send +
     // Initialize Database
     let pool = db::init_db(&config.database_url).await?;
 
+    // Cleanup stale chunked upload directories from previous runs
+    let _ = tokio::fs::remove_dir_all("uploads/chunked").await;
+    tracing::info!("Cleaned up stale chunked upload directories");
+
     // App State
     let app_state = Arc::new(AppState::new(pool, config.clone()));
+
+    // Start background scheduler
+    scheduler::start(app_state.clone());
 
     // Router
     let app = Router::new()
@@ -84,6 +92,9 @@ pub async fn run(shutdown_signal: impl std::future::Future<Output = ()> + Send +
         .route("/api/updates/:id", axum::routing::delete(handlers::delete_update))
         .route("/api/updates/trigger", post(handlers::trigger_update_clients))
         .route("/api/history", get(handlers::get_script_history).delete(handlers::clear_script_history))
+        .route("/api/scheduled-tasks", get(handlers::list_scheduled_tasks).post(handlers::create_scheduled_task))
+        .route("/api/scheduled-tasks/:id", axum::routing::put(handlers::update_scheduled_task).delete(handlers::delete_scheduled_task))
+        .route("/api/scheduled-tasks/:id/toggle", post(handlers::toggle_scheduled_task))
         .route("/ws", get(handlers::ws_handler))
         // Auth Routes
         .route("/api/auth/login", post(handlers::login))

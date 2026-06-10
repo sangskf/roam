@@ -623,7 +623,7 @@ async fn execute_command_locally(cmd: CommandPayload) -> CommandResult {
     }
 }
 
-async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGroup, history_id: Uuid, server_host: String) {
+pub(crate) async fn run_script_task(state: Arc<AppState>, client_id: Uuid, script: ScriptGroup, history_id: Uuid, server_host: String) {
     info!("Starting script {} on client {}", script.name, client_id);
     
     // Get client hostname for progress
@@ -980,6 +980,7 @@ pub struct ExecutionHistoryItem {
     pub started_at: String,
     pub completed_at: Option<String>,
     pub logs: Vec<String>,
+    pub scheduled_task_id: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -992,6 +993,7 @@ pub struct PaginatedHistory {
 pub struct HistoryParams {
     pub page: Option<i64>,
     pub limit: Option<i64>,
+    pub scheduled_task_id: Option<String>,
 }
 
 pub async fn get_script_history(
@@ -1002,26 +1004,57 @@ pub async fn get_script_history(
     let limit = params.limit.unwrap_or(50).max(1);
     let offset = (page - 1) * limit;
 
-    let total = sqlx::query("SELECT COUNT(*) as count FROM execution_history")
-        .fetch_one(&state.db)
-        .await
-        .map(|r| r.try_get::<i64, _>("count").unwrap_or(0))
-        .unwrap_or(0);
+    let has_filter = params.scheduled_task_id.is_some();
 
-    let rows = sqlx::query(
-        r#"
-        SELECT h.id, h.script_id, h.client_id, s.name as script_name, c.hostname as client_hostname, c.alias as client_alias, h.status, CAST(h.started_at AS TEXT) as started_at, CAST(h.completed_at AS TEXT) as completed_at, h.logs
-        FROM execution_history h
-        JOIN scripts s ON h.script_id = s.id
-        LEFT JOIN clients c ON h.client_id = c.id
-        ORDER BY h.started_at DESC
-        LIMIT ? OFFSET ?
-        "#)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default();
+    let total = if let Some(ref st_id) = params.scheduled_task_id {
+        sqlx::query("SELECT COUNT(*) as count FROM execution_history WHERE scheduled_task_id = ?")
+            .bind(st_id)
+            .fetch_one(&state.db)
+            .await
+            .map(|r| r.try_get::<i64, _>("count").unwrap_or(0))
+            .unwrap_or(0)
+    } else {
+        sqlx::query("SELECT COUNT(*) as count FROM execution_history")
+            .fetch_one(&state.db)
+            .await
+            .map(|r| r.try_get::<i64, _>("count").unwrap_or(0))
+            .unwrap_or(0)
+    };
+
+    let rows = if has_filter {
+        let st_id = params.scheduled_task_id.as_ref().unwrap();
+        sqlx::query(
+            r#"
+            SELECT h.id, h.script_id, h.client_id, s.name as script_name, c.hostname as client_hostname, c.alias as client_alias, h.status, CAST(h.started_at AS TEXT) as started_at, CAST(h.completed_at AS TEXT) as completed_at, h.logs, h.scheduled_task_id
+            FROM execution_history h
+            JOIN scripts s ON h.script_id = s.id
+            LEFT JOIN clients c ON h.client_id = c.id
+            WHERE h.scheduled_task_id = ?
+            ORDER BY h.started_at DESC
+            LIMIT ? OFFSET ?
+            "#)
+        .bind(st_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+    } else {
+        sqlx::query(
+            r#"
+            SELECT h.id, h.script_id, h.client_id, s.name as script_name, c.hostname as client_hostname, c.alias as client_alias, h.status, CAST(h.started_at AS TEXT) as started_at, CAST(h.completed_at AS TEXT) as completed_at, h.logs, h.scheduled_task_id
+            FROM execution_history h
+            JOIN scripts s ON h.script_id = s.id
+            LEFT JOIN clients c ON h.client_id = c.id
+            ORDER BY h.started_at DESC
+            LIMIT ? OFFSET ?
+            "#)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default()
+    };
 
     let history: Vec<ExecutionHistoryItem> = rows.into_iter().map(|r| {
         let logs: Vec<String> = r.get::<Option<String>, _>("logs").as_deref().and_then(|l| serde_json::from_str(l).ok()).unwrap_or_default();
@@ -1036,6 +1069,7 @@ pub async fn get_script_history(
             started_at: r.get::<Option<String>, _>("started_at").unwrap_or_default(),
             completed_at: r.get("completed_at"),
             logs,
+            scheduled_task_id: r.get("scheduled_task_id"),
         }
     }).collect();
     
@@ -1160,13 +1194,19 @@ pub async fn complete_chunked_upload(
 
     // Create output directory
     if let Err(e) = tokio::fs::create_dir_all(&out_dir).await {
+        warn!("Failed to create output dir for {}: {}", cmd_id, e);
+        let _ = tokio::fs::remove_dir_all(&chunk_dir).await;
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create output dir: {}", e)).into_response();
     }
 
     // Open output file for writing
     let mut out_file = match tokio::fs::File::create(&out_path).await {
         Ok(f) => f,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create output file: {}", e)).into_response(),
+        Err(e) => {
+            warn!("Failed to create output file for {}: {}", cmd_id, e);
+            let _ = tokio::fs::remove_dir_all(&chunk_dir).await;
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create output file: {}", e)).into_response();
+        }
     };
 
     // Read and concatenate chunks in order
@@ -1175,20 +1215,29 @@ pub async fn complete_chunked_upload(
         match tokio::fs::read(&chunk_path).await {
             Ok(data) => {
                 if let Err(e) = out_file.write_all(&data).await {
+                    warn!("Failed to write chunk {} for {}: {}", i, cmd_id, e);
+                    let _ = tokio::fs::remove_dir_all(&chunk_dir).await;
                     return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to write chunk {}: {}", i, e)).into_response();
                 }
             }
             Err(e) => {
+                warn!("Failed to read chunk {} for {}: {}", i, cmd_id, e);
+                let _ = tokio::fs::remove_dir_all(&chunk_dir).await;
                 return (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to read chunk {}: {}", i, e)).into_response();
             }
         }
     }
 
-    // Flush before cleanup
-    let _ = out_file.flush().await;
+    // Flush and close output file
+    if let Err(e) = out_file.flush().await {
+        warn!("Failed to flush output for {}: {}", cmd_id, e);
+    }
+    drop(out_file);
 
-    // Cleanup chunk directory
-    let _ = tokio::fs::remove_dir_all(&chunk_dir).await;
+    // Cleanup chunk directory (log error on failure instead of silently ignoring)
+    if let Err(e) = tokio::fs::remove_dir_all(&chunk_dir).await {
+        warn!("Failed to cleanup chunk directory for {}: {}", cmd_id, e);
+    }
 
     info!("Chunked upload completed for command {}: {}", cmd_id, out_path);
     (StatusCode::OK, "Upload completed successfully").into_response()
@@ -2144,4 +2193,266 @@ fn get_download_base_url(state: &AppState, client_id: Option<Uuid>, request_host
     
     // Fallback to config host
     format!("{}://{}:{}", scheme, state.config.host, state.config.port)
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled Tasks API
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+pub struct ScheduledTaskResponse {
+    pub id: Uuid,
+    pub name: String,
+    pub description: String,
+    pub cron_expression: String,
+    pub task_type: String,
+    pub group_id: Option<String>,
+    pub script_ids: Vec<String>,
+    pub client_ids: Vec<String>,
+    pub steps: serde_json::Value,
+    pub enabled: bool,
+    pub created_at: Option<String>,
+    pub last_run_at: Option<String>,
+    pub next_run_at: Option<String>,
+    pub last_status: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct CreateScheduledTaskRequest {
+    pub name: String,
+    pub description: Option<String>,
+    pub cron_expression: String,
+    pub task_type: String, // "group" or "custom"
+    pub group_id: Option<String>,
+    pub script_ids: Option<Vec<String>>,
+    pub client_ids: Option<Vec<String>>,
+    pub steps: Option<serde_json::Value>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct UpdateScheduledTaskRequest {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub cron_expression: Option<String>,
+    pub task_type: Option<String>,
+    pub group_id: Option<String>,
+    pub script_ids: Option<Vec<String>>,
+    pub client_ids: Option<Vec<String>>,
+    pub steps: Option<serde_json::Value>,
+    pub enabled: Option<bool>,
+}
+
+pub async fn list_scheduled_tasks(
+    State(state): State<Arc<AppState>>,
+) -> Json<Vec<ScheduledTaskResponse>> {
+    let rows = sqlx::query(
+        "SELECT id, name, description, cron_expression, task_type, group_id, script_ids, client_ids, steps, enabled, created_at, last_run_at, next_run_at, last_status \
+         FROM scheduled_tasks ORDER BY created_at DESC"
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    let tasks = rows.into_iter().map(|r| {
+        let id_str: String = r.get("id");
+        let steps_str: String = r.get("steps");
+        let steps_val: serde_json::Value = serde_json::from_str(&steps_str).unwrap_or(serde_json::Value::Array(vec![]));
+        let script_ids_str: String = r.get("script_ids");
+        let client_ids_str: String = r.get("client_ids");
+        let script_ids: Vec<String> = serde_json::from_str(&script_ids_str).unwrap_or_default();
+        let client_ids: Vec<String> = serde_json::from_str(&client_ids_str).unwrap_or_default();
+        let enabled: i32 = r.get("enabled");
+
+        ScheduledTaskResponse {
+            id: Uuid::parse_str(&id_str).unwrap_or_default(),
+            name: r.get("name"),
+            description: r.get("description"),
+            cron_expression: r.get("cron_expression"),
+            task_type: r.get("task_type"),
+            group_id: r.get("group_id"),
+            script_ids,
+            client_ids,
+            steps: steps_val,
+            enabled: enabled != 0,
+            created_at: r.get("created_at"),
+            last_run_at: r.get("last_run_at"),
+            next_run_at: r.get("next_run_at"),
+            last_status: r.get::<Option<String>, _>("last_status"),
+        }
+    }).collect();
+
+    Json(tasks)
+}
+
+fn compute_next_run(cron_expr: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    crate::scheduler::CronExpr::parse(cron_expr).ok()?.next_occurrence(chrono::Utc::now())
+}
+
+pub async fn create_scheduled_task(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<CreateScheduledTaskRequest>,
+) -> impl IntoResponse {
+    // Validate cron expression
+    if compute_next_run(&payload.cron_expression).is_none() {
+        return (StatusCode::BAD_REQUEST, "Invalid cron expression").into_response();
+    }
+
+    let id = Uuid::new_v4();
+    let next_run = compute_next_run(&payload.cron_expression);
+
+    let script_ids = serde_json::to_string(&payload.script_ids.unwrap_or_default()).unwrap_or("[]".to_string());
+    let client_ids = serde_json::to_string(&payload.client_ids.unwrap_or_default()).unwrap_or("[]".to_string());
+    let steps = serde_json::to_string(&payload.steps.unwrap_or(serde_json::Value::Array(vec![]))).unwrap_or("[]".to_string());
+    let description = payload.description.unwrap_or_default();
+
+    let result = sqlx::query(
+        "INSERT INTO scheduled_tasks (id, name, description, cron_expression, task_type, group_id, script_ids, client_ids, steps, enabled, next_run_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)"
+    )
+    .bind(id.to_string())
+    .bind(&payload.name)
+    .bind(&description)
+    .bind(&payload.cron_expression)
+    .bind(&payload.task_type)
+    .bind(&payload.group_id)
+    .bind(&script_ids)
+    .bind(&client_ids)
+    .bind(&steps)
+    .bind(next_run)
+    .execute(&state.db)
+    .await;
+
+    match result {
+        Ok(_) => (StatusCode::CREATED, "Scheduled task created").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to create: {}", e)).into_response(),
+    }
+}
+
+pub async fn update_scheduled_task(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<UpdateScheduledTaskRequest>,
+) -> impl IntoResponse {
+    let id_str = id.to_string();
+
+    // Fetch existing
+    let existing = sqlx::query("SELECT name, description, cron_expression, task_type, group_id, script_ids, client_ids, steps, enabled FROM scheduled_tasks WHERE id = ?")
+        .bind(&id_str)
+        .fetch_optional(&state.db)
+        .await;
+
+    let row = match existing {
+        Ok(Some(r)) => r,
+        Ok(None) => return (StatusCode::NOT_FOUND, "Scheduled task not found").into_response(),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("DB error: {}", e)).into_response(),
+    };
+
+    let cron_expr: String = payload.cron_expression.clone().unwrap_or_else(|| row.get("cron_expression"));
+
+    // Validate cron if changed
+    if payload.cron_expression.is_some() && crate::scheduler::CronExpr::parse(&cron_expr).is_err() {
+        return (StatusCode::BAD_REQUEST, "Invalid cron expression").into_response();
+    }
+
+    let next_run = compute_next_run(&cron_expr);
+
+    let name: String = payload.name.unwrap_or_else(|| row.get("name"));
+    let description: String = payload.description.unwrap_or_else(|| row.get("description"));
+    let task_type: String = payload.task_type.unwrap_or_else(|| row.get("task_type"));
+    let group_id: Option<String> = if payload.group_id.is_some() { payload.group_id } else { row.get("group_id") };
+    let enabled_val: bool = payload.enabled.unwrap_or_else(|| {
+        let v: i32 = row.get("enabled");
+        v != 0
+    });
+    let enabled: i32 = if enabled_val { 1 } else { 0 };
+
+    let script_ids: String = if let Some(ref ids) = payload.script_ids {
+        serde_json::to_string(ids).unwrap_or("[]".to_string())
+    } else {
+        row.get("script_ids")
+    };
+    let client_ids: String = if let Some(ref ids) = payload.client_ids {
+        serde_json::to_string(ids).unwrap_or("[]".to_string())
+    } else {
+        row.get("client_ids")
+    };
+    let steps: String = if let Some(ref s) = payload.steps {
+        serde_json::to_string(s).unwrap_or("[]".to_string())
+    } else {
+        row.get("steps")
+    };
+
+    match sqlx::query(
+        "UPDATE scheduled_tasks SET name = ?, description = ?, cron_expression = ?, task_type = ?, group_id = ?, script_ids = ?, client_ids = ?, steps = ?, enabled = ?, next_run_at = ? WHERE id = ?"
+    )
+    .bind(&name)
+    .bind(&description)
+    .bind(&cron_expr)
+    .bind(&task_type)
+    .bind(&group_id)
+    .bind(&script_ids)
+    .bind(&client_ids)
+    .bind(&steps)
+    .bind(enabled)
+    .bind(next_run)
+    .bind(&id_str)
+    .execute(&state.db)
+    .await
+    {
+        Ok(_) => (StatusCode::OK, "Scheduled task updated").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to update: {}", e)).into_response(),
+    }
+}
+
+pub async fn delete_scheduled_task(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> impl IntoResponse {
+    let id_str = id.to_string();
+    match sqlx::query("DELETE FROM scheduled_tasks WHERE id = ?")
+        .bind(&id_str)
+        .execute(&state.db)
+        .await
+    {
+        Ok(_) => (StatusCode::OK, "Scheduled task deleted").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to delete: {}", e)).into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct ToggleScheduledTaskRequest {
+    pub enabled: bool,
+}
+
+pub async fn toggle_scheduled_task(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<ToggleScheduledTaskRequest>,
+) -> impl IntoResponse {
+    let id_str = id.to_string();
+    let v: i32 = if payload.enabled { 1 } else { 0 };
+
+    // If enabling, recompute next_run_at from cron
+    let next_run = if payload.enabled {
+        let cron_expr: Option<String> = sqlx::query_scalar("SELECT cron_expression FROM scheduled_tasks WHERE id = ?")
+            .bind(&id_str)
+            .fetch_optional(&state.db)
+            .await
+            .unwrap_or(None);
+
+        cron_expr.and_then(|expr| compute_next_run(&expr))
+    } else {
+        None
+    };
+
+    match sqlx::query("UPDATE scheduled_tasks SET enabled = ?, next_run_at = ? WHERE id = ?")
+        .bind(v)
+        .bind(next_run)
+        .bind(&id_str)
+        .execute(&state.db)
+        .await
+    {
+        Ok(_) => (StatusCode::OK, "Scheduled task updated").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to toggle: {}", e)).into_response(),
+    }
 }

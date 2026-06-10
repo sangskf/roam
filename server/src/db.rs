@@ -79,6 +79,23 @@ pub async fn init_db(db_url: &str) -> anyhow::Result<Pool<Sqlite>> {
             uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS scheduled_tasks (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            cron_expression TEXT NOT NULL,
+            task_type TEXT NOT NULL DEFAULT 'group',
+            group_id TEXT,
+            script_ids TEXT DEFAULT '[]',
+            client_ids TEXT DEFAULT '[]',
+            steps TEXT DEFAULT '[]',
+            enabled INTEGER DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_run_at DATETIME,
+            next_run_at DATETIME,
+            last_status TEXT DEFAULT ''
+        );
+
         CREATE TABLE IF NOT EXISTS web_users (
             id TEXT PRIMARY KEY,
             username TEXT UNIQUE NOT NULL,
@@ -99,6 +116,11 @@ pub async fn init_db(db_url: &str) -> anyhow::Result<Pool<Sqlite>> {
     let _ = sqlx::query("ALTER TABLE clients ADD COLUMN working_directory TEXT").execute(&pool).await;
     let _ = sqlx::query("ALTER TABLE clients ADD COLUMN display_ip TEXT").execute(&pool).await;
     let _ = sqlx::query("ALTER TABLE group_scripts ADD COLUMN sort_order INTEGER DEFAULT 0").execute(&pool).await;
+
+    // Migration: Scheduled tasks columns
+    let _ = sqlx::query("ALTER TABLE scheduled_tasks ADD COLUMN description TEXT DEFAULT ''").execute(&pool).await;
+    let _ = sqlx::query("ALTER TABLE scheduled_tasks ADD COLUMN last_status TEXT DEFAULT ''").execute(&pool).await;
+    let _ = sqlx::query("ALTER TABLE execution_history ADD COLUMN scheduled_task_id TEXT").execute(&pool).await;
 
     // Seed admin user if not exists
     // Use runtime query to avoid compile-time check failure on fresh db

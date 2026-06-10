@@ -20,7 +20,7 @@ impl ClientConfig {
             .set_default("heartbeat_interval_sec", 10)?
             .set_default("alias", None::<String>)?
             .set_default("tls_insecure", false)?
-            .set_default("chunk_size", 1 * 1024 * 1024)?
+            .set_default("chunk_size", 10 * 1024 * 1024)?
             .set_default("max_concurrent_transfers", 4)?;
 
         // 1. Prioritize loading config from executable directory (Production/Service)

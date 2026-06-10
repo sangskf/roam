@@ -50,6 +50,7 @@
                          <button @click="currentView = 'groups'; fetchGroups()" :class="['px-3 py-2 rounded-md text-sm font-medium transition', currentView === 'groups' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100']">{{ t('groups') }}</button>
                          <button @click="currentView = 'scripts'; fetchScripts()" :class="['px-3 py-2 rounded-md text-sm font-medium transition', currentView === 'scripts' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100']">{{ t('scripts') }}</button>
                          <button @click="currentView = 'history'; fetchHistory()" :class="['px-3 py-2 rounded-md text-sm font-medium transition', currentView === 'history' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100']">{{ t('history') }}</button>
+                         <button @click="currentView = 'scheduled'; fetchScheduledTasks()" :class="['px-3 py-2 rounded-md text-sm font-medium transition', currentView === 'scheduled' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100']">{{ t('scheduled') }}</button>
                          <button @click="currentView = 'updates'; fetchUpdates()" :class="['px-3 py-2 rounded-md text-sm font-medium transition', currentView === 'updates' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100']">{{ t('updates') }}</button>
                     </nav>
         
@@ -139,6 +140,7 @@
                      <button @click="currentView = 'groups'; fetchGroups(); isMenuOpen = false" :class="['block w-full text-left px-3 py-2 rounded-md text-base font-medium', currentView === 'groups' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50']">{{ t('groups') }}</button>
                      <button @click="currentView = 'scripts'; fetchScripts(); isMenuOpen = false" :class="['block w-full text-left px-3 py-2 rounded-md text-base font-medium', currentView === 'scripts' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50']">{{ t('scripts') }}</button>
                      <button @click="currentView = 'history'; fetchHistory(); isMenuOpen = false" :class="['block w-full text-left px-3 py-2 rounded-md text-base font-medium', currentView === 'history' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50']">{{ t('history') }}</button>
+                     <button @click="currentView = 'scheduled'; fetchScheduledTasks(); isMenuOpen = false" :class="['block w-full text-left px-3 py-2 rounded-md text-base font-medium', currentView === 'scheduled' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50']">{{ t('scheduled') }}</button>
                      <button @click="currentView = 'updates'; fetchUpdates(); isMenuOpen = false" :class="['block w-full text-left px-3 py-2 rounded-md text-base font-medium', currentView === 'updates' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50']">{{ t('updates') }}</button>
                 </div>
                 <div class="pt-4 pb-4 border-t border-gray-100 px-4">
@@ -413,11 +415,269 @@
             </div>
         </div>
 
+        <!-- Scheduled Tasks View -->
+        <div v-if="currentView === 'scheduled'" class="bg-white rounded-lg shadow-md p-6 flex-1 flex flex-col">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-xl font-bold">{{ t('scheduledTasks') }}</h2>
+                <button @click="openCreateScheduled()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow-sm flex items-center gap-2">
+                    <span>+</span> {{ t('createTask') }}
+                </button>
+            </div>
+            <div class="overflow-x-auto flex-1">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="border-b bg-gray-50">
+                            <th class="text-left px-4 py-3 font-semibold">{{ t('name') }}</th>
+                            <th class="text-left px-4 py-3 font-semibold">{{ t('cronExpression') }}</th>
+                            <th class="text-left px-4 py-3 font-semibold">{{ t('taskType') }}</th>
+                            <th class="text-left px-4 py-3 font-semibold">{{ t('lastRun') }}</th>
+                            <th class="text-left px-4 py-3 font-semibold">{{ t('nextRun') }}</th>
+                            <th class="text-center px-4 py-3 font-semibold">{{ t('taskEnabledShort') }}</th>
+                            <th class="text-center px-4 py-3 font-semibold">{{ t('lastRunStatus') }}</th>
+                            <th class="text-right px-4 py-3 font-semibold">{{ t('actions') }}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="task in scheduledTasks" :key="task.id" class="border-b hover:bg-gray-50">
+                            <td class="px-4 py-3">
+                                <div class="font-medium">{{ task.name }}</div>
+                                <div v-if="task.description" class="text-xs text-gray-500 truncate max-w-xs">{{ task.description }}</div>
+                            </td>
+                            <td class="px-4 py-3">
+                                <code class="text-xs bg-gray-100 px-2 py-1 rounded">{{ task.cron_expression }}</code>
+                                <div v-if="task.cron_expression" class="text-xs text-gray-500 mt-1">{{ describeCron(task.cron_expression) }}</div>
+                            </td>
+                            <td class="px-4 py-3">
+                                <span :class="task.task_type === 'group' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'" class="text-xs px-2 py-1 rounded">
+                                    {{ task.task_type === 'group' ? t('groupTask') : t('customTask') }}
+                                </span>
+                            </td>
+                            <td class="px-4 py-3 text-xs text-gray-500">
+                                {{ task.last_run_at ? formatDate(task.last_run_at) : '-' }}
+                            </td>
+                            <td class="px-4 py-3 text-xs text-gray-500">
+                                {{ task.next_run_at ? formatDate(task.next_run_at) : '-' }}
+                            </td>
+                            <td class="px-4 py-3 text-center">
+                                <span :class="task.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'" class="px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap">
+                                    {{ task.enabled ? t('enabled') : t('disabled') }}
+                                </span>
+                            </td>
+                            <td class="px-4 py-3 text-center">
+                                <span v-if="task.last_status === 'completed'" class="bg-blue-50 text-blue-600 px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap">{{ t('completed') }}</span>
+                                <span v-else-if="task.last_status === 'failed'" class="bg-red-50 text-red-600 px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap">{{ t('failed') }}</span>
+                                <span v-else-if="task.last_status === 'running'" class="bg-yellow-50 text-yellow-600 px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap">{{ t('running') }}</span>
+                                <span v-else class="text-gray-300 text-xs">-</span>
+                            </td>
+                            <td class="px-4 py-3 text-right">
+                                <div class="flex items-center justify-end gap-1">
+                                    <button @click="toggleScheduled(task.id, !task.enabled)" :title="t('toggleTask')"
+                                        :class="task.enabled ? 'text-green-600 hover:text-green-800' : 'text-gray-400 hover:text-gray-600'" class="p-1 text-lg">
+                                        <span v-if="task.enabled">&#x2713;</span><span v-else>&#x2717;</span>
+                                    </button>
+                                    <button @click="openEditScheduled(task)" class="text-gray-500 hover:text-blue-600 p-1" :title="t('edit')">&#x270E;</button>
+                                    <button @click="viewScheduledHistory(task)" class="text-gray-500 hover:text-blue-600 p-1 text-xs" :title="t('viewHistory')">&#x1F4CB;</button>
+                                    <button @click="deleteScheduled(task.id)" class="text-gray-500 hover:text-red-600 p-1" :title="t('delete')">&#x1F5D1;</button>
+                                </div>
+                            </td>
+                        </tr>
+                        <tr v-if="scheduledTasks.length === 0">
+                            <td colspan="8" class="text-center py-8 text-gray-400">{{ t('noData') }}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Scheduled Task Modal -->
+        <div v-if="showScheduledModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div class="bg-white rounded-lg shadow-xl w-full md:max-w-lg m-4 md:m-0 flex flex-col max-h-[90vh]">
+                <div class="p-6 border-b">
+                    <h3 class="text-xl font-bold">{{ isEditingScheduled ? t('editTask') : t('createTask') }}</h3>
+                </div>
+                <div class="p-6 max-h-[60vh] overflow-auto space-y-4">
+                    <div>
+                        <label class="block text-sm font-bold mb-1">{{ t('name') }}</label>
+                        <input v-model="scheduledForm.name" class="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold mb-1">{{ t('description') }}</label>
+                        <textarea v-model="scheduledForm.description" rows="2" class="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"></textarea>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold mb-1">{{ t('cronExpression') }}</label>
+                        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-2">
+                            <button @click="scheduledForm.cron_expression = '* * * * *'" :class="scheduledForm.cron_expression === '* * * * *' ? 'ring-2 ring-blue-500 bg-blue-50' : 'bg-gray-50 hover:bg-gray-100'" class="text-xs border rounded px-2 py-1.5 text-left">{{ t('cronEveryMinute') }}</button>
+                            <button @click="scheduledForm.cron_expression = '*/5 * * * *'" :class="scheduledForm.cron_expression === '*/5 * * * *' ? 'ring-2 ring-blue-500 bg-blue-50' : 'bg-gray-50 hover:bg-gray-100'" class="text-xs border rounded px-2 py-1.5 text-left">{{ t('cronEvery5Min') }}</button>
+                            <button @click="scheduledForm.cron_expression = '*/15 * * * *'" :class="scheduledForm.cron_expression === '*/15 * * * *' ? 'ring-2 ring-blue-500 bg-blue-50' : 'bg-gray-50 hover:bg-gray-100'" class="text-xs border rounded px-2 py-1.5 text-left">{{ t('cronEvery15Min') }}</button>
+                            <button @click="scheduledForm.cron_expression = '*/30 * * * *'" :class="scheduledForm.cron_expression === '*/30 * * * *' ? 'ring-2 ring-blue-500 bg-blue-50' : 'bg-gray-50 hover:bg-gray-100'" class="text-xs border rounded px-2 py-1.5 text-left">{{ t('cronEvery30Min') }}</button>
+                            <button @click="scheduledForm.cron_expression = '0 * * * *'" :class="scheduledForm.cron_expression === '0 * * * *' ? 'ring-2 ring-blue-500 bg-blue-50' : 'bg-gray-50 hover:bg-gray-100'" class="text-xs border rounded px-2 py-1.5 text-left">{{ t('cronEveryHour') }}</button>
+                            <button @click="scheduledForm.cron_expression = '0 */2 * * *'" :class="scheduledForm.cron_expression === '0 */2 * * *' ? 'ring-2 ring-blue-500 bg-blue-50' : 'bg-gray-50 hover:bg-gray-100'" class="text-xs border rounded px-2 py-1.5 text-left">{{ t('cronEvery2Hours') }}</button>
+                            <button @click="scheduledForm.cron_expression = '0 0 * * *'" :class="scheduledForm.cron_expression === '0 0 * * *' ? 'ring-2 ring-blue-500 bg-blue-50' : 'bg-gray-50 hover:bg-gray-100'" class="text-xs border rounded px-2 py-1.5 text-left">{{ t('cronDaily') }}</button>
+                            <button @click="scheduledForm.cron_expression = '0 9 * * *'" :class="scheduledForm.cron_expression === '0 9 * * *' ? 'ring-2 ring-blue-500 bg-blue-50' : 'bg-gray-50 hover:bg-gray-100'" class="text-xs border rounded px-2 py-1.5 text-left">{{ t('cronEveryMorning') }}</button>
+                            <button @click="scheduledForm.cron_expression = '0 0 * * 1'" :class="scheduledForm.cron_expression === '0 0 * * 1' ? 'ring-2 ring-blue-500 bg-blue-50' : 'bg-gray-50 hover:bg-gray-100'" class="text-xs border rounded px-2 py-1.5 text-left">{{ t('cronWeekly') }}</button>
+                            <button @click="scheduledForm.cron_expression = '0 0 1 * *'" :class="scheduledForm.cron_expression === '0 0 1 * *' ? 'ring-2 ring-blue-500 bg-blue-50' : 'bg-gray-50 hover:bg-gray-100'" class="text-xs border rounded px-2 py-1.5 text-left">{{ t('cronMonthly') }}</button>
+                        </div>
+                        <div class="flex gap-2 items-center">
+                            <input v-model="scheduledForm.cron_expression" placeholder="*/5 * * * *" class="flex-1 border rounded px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none font-mono text-sm">
+                            <span v-if="scheduledForm.cron_expression" class="text-xs text-gray-500 whitespace-nowrap">{{ describeCron(scheduledForm.cron_expression) }}</span>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-bold mb-1">{{ t('taskType') }}</label>
+                        <select v-model="scheduledForm.task_type" class="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                            <option value="group">{{ t('groupTask') }}</option>
+                            <option value="custom">{{ t('customTask') }}</option>
+                        </select>
+                    </div>
+
+                    <!-- Group task: select group & scripts -->
+                    <div v-if="scheduledForm.task_type === 'group'">
+                        <div class="mb-4">
+                            <label class="block text-sm font-bold mb-1">{{ t('selectGroup') }}</label>
+                            <select v-model="scheduledForm.group_id" class="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none">
+                                <option value="">{{ t('selectGroupPlaceholder') }}</option>
+                                <option v-for="g in groupList" :key="g.id" :value="g.id">{{ g.name }}</option>
+                            </select>
+                            <div v-if="groupList.length === 0" class="text-xs text-gray-400 mt-1">{{ t('noGroups') }}</div>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-bold mb-1">{{ t('selectScripts') }}</label>
+                            <div class="space-y-2 max-h-40 overflow-auto border p-2 rounded bg-gray-50">
+                                <label v-for="script in groupFilteredScripts" :key="script.id" class="flex items-center p-2 hover:bg-white rounded cursor-pointer border border-transparent hover:border-gray-200">
+                                    <input type="checkbox" :value="script.id" v-model="scheduledForm.script_ids" class="mr-3 h-4 w-4 text-blue-600">
+                                    <div class="text-sm font-medium">{{ script.name }}</div>
+                                </label>
+                                <div v-if="groupFilteredScripts.length === 0" class="text-center text-gray-400 py-2">{{ t('noScripts') }}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Custom task: select clients & define steps inline -->
+                    <div v-if="scheduledForm.task_type === 'custom'">
+                        <div class="mb-4">
+                            <label class="block text-sm font-bold mb-1">{{ t('selectClients') }}</label>
+                            <div class="space-y-2 max-h-40 overflow-auto border p-2 rounded bg-gray-50">
+                                <label v-for="client in allClients" :key="client.id" class="flex items-center p-2 hover:bg-white rounded cursor-pointer border border-transparent hover:border-gray-200">
+                                    <input type="checkbox" :value="client.id" v-model="scheduledForm.client_ids" class="mr-3 h-4 w-4 text-blue-600 shrink-0">
+                                    <div class="flex-1 min-w-0">
+                                        <span class="text-sm font-medium truncate">{{ client.hostname }}<span v-if="client.alias" class="text-gray-500 font-normal ml-1">({{ client.alias }})</span></span>
+                                    </div>
+                                </label>
+                                <div v-if="allClients.length === 0" class="text-center text-gray-400 py-2">{{ t('noClients') }}</div>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between items-center mb-2">
+                                <label class="text-sm font-bold">{{ t('steps') }}</label>
+                                <button @click="addScheduledStep" class="text-sm text-blue-600 hover:underline">+ {{ t('addStep') }}</button>
+                            </div>
+                            <div class="space-y-3">
+                                <div v-for="(step, index) in scheduledForm.steps" :key="index" class="border rounded p-3 bg-gray-50 relative group">
+                                    <button @click="removeScheduledStep(index)" class="absolute top-2 right-2 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition">✕</button>
+                                    <div class="flex gap-4 mb-2">
+                                        <div class="w-1/4">
+                                            <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('stepType') }}</label>
+                                            <select v-model="step.type" class="w-full border rounded px-2 py-1 text-sm bg-white">
+                                                <option value="Shell">{{ t('shell') }}</option>
+                                                <option value="Upload">{{ t('uploadFile') }}</option>
+                                                <option value="Download">{{ t('downloadFile') }}</option>
+                                                <option value="UploadDir">{{ t('uploadDir') }}</option>
+                                                <option value="DownloadDir">{{ t('downloadDir') }}</option>
+                                                <option value="Copy">{{ t('copy') }}</option>
+                                                <option value="Move">{{ t('move') }}</option>
+                                                <option value="Delete">{{ t('delete') }}</option>
+                                                <option value="HttpRequest">{{ t('httpRequest') }}</option>
+                                            </select>
+                                        </div>
+                                        <div class="flex-1">
+                                            <div v-if="step.type === 'Shell'">
+                                                <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('command') }}</label>
+                                                <input v-model="step.cmd" class="w-full border rounded px-2 py-1 text-sm mb-2" placeholder="e.g. ls">
+                                                <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('args') }}</label>
+                                                <input v-model="step.args" class="w-full border rounded px-2 py-1 text-sm" placeholder="-la /tmp">
+                                            </div>
+                                            <div v-if="step.type === 'Upload'">
+                                                <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('localPath') }}</label>
+                                                <input v-model="step.local_path" class="w-full border rounded px-2 py-1 text-sm mb-2" placeholder="server/uploads/staging/file.txt">
+                                                <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('remotePath') }}</label>
+                                                <input v-model="step.remote_path" class="w-full border rounded px-2 py-1 text-sm" placeholder="/tmp/file.txt">
+                                            </div>
+                                            <div v-if="step.type === 'Download'">
+                                                <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('remotePath') }}</label>
+                                                <input v-model="step.remote_path" class="w-full border rounded px-2 py-1 text-sm mb-2" placeholder="/etc/passwd">
+                                                <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('serverSavePath') }}</label>
+                                                <input v-model="step.server_save_path" class="w-full border rounded px-2 py-1 text-sm" :placeholder="t('serverSavePathPlaceholder')">
+                                            </div>
+                                            <div v-if="step.type === 'UploadDir'">
+                                                <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('localPath') }}</label>
+                                                <input v-model="step.local_path" class="w-full border rounded px-2 py-1 text-sm mb-2" placeholder="Folder name in staging">
+                                                <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('remotePath') }}</label>
+                                                <input v-model="step.remote_path" class="w-full border rounded px-2 py-1 text-sm" placeholder="/remote/dir">
+                                            </div>
+                                            <div v-if="step.type === 'DownloadDir'">
+                                                <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('remotePath') }}</label>
+                                                <input v-model="step.remote_path" class="w-full border rounded px-2 py-1 text-sm mb-2" placeholder="/remote/dir">
+                                                <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('serverSavePath') }}</label>
+                                                <input v-model="step.server_save_path" class="w-full border rounded px-2 py-1 text-sm" :placeholder="t('serverSavePathPlaceholder')">
+                                            </div>
+                                            <div v-if="step.type === 'Copy' || step.type === 'Move'">
+                                                <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('sourcePath') }}</label>
+                                                <input v-model="step.src_path" class="w-full border rounded px-2 py-1 text-sm mb-2">
+                                                <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('destPath') }}</label>
+                                                <input v-model="step.dest_path" class="w-full border rounded px-2 py-1 text-sm">
+                                            </div>
+                                            <div v-if="step.type === 'Delete'">
+                                                <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('path') }}</label>
+                                                <input v-model="step.path" class="w-full border rounded px-2 py-1 text-sm">
+                                            </div>
+                                            <div v-if="step.type === 'HttpRequest'">
+                                                <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('url') }}</label>
+                                                <input v-model="step.url" class="w-full border rounded px-2 py-1 text-sm mb-2" placeholder="https://...">
+                                                <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('method') }}</label>
+                                                <select v-model="step.method" class="w-full border rounded px-2 py-1 text-sm bg-white mb-2">
+                                                    <option>GET</option>
+                                                    <option>POST</option>
+                                                    <option>PUT</option>
+                                                    <option>DELETE</option>
+                                                </select>
+                                                <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('body') }}</label>
+                                                <input v-model="step.body" class="w-full border rounded px-2 py-1 text-sm" placeholder="Request body (optional)">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div v-if="scheduledForm.steps.length === 0" class="text-center text-gray-400 py-4 text-sm">{{ t('noSteps') }}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-bold mb-1">{{ t('enabled') }}</label>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" v-model="scheduledForm.enabled" class="h-4 w-4 text-blue-600">
+                            <span class="text-sm">{{ scheduledForm.enabled ? t('taskEnabled') : t('taskDisabled') }}</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="p-6 border-t flex justify-end gap-2">
+                    <button @click="showScheduledModal = false" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded font-medium">{{ t('cancel') }}</button>
+                    <button @click="saveScheduled" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium">{{ t('save') }}</button>
+                </div>
+            </div>
+        </div>
+
         <!-- History View -->
         <div v-if="currentView === 'history'" class="bg-white rounded-lg shadow-md overflow-hidden flex-1 flex flex-col">
              <div class="p-4 border-b flex justify-between items-center bg-gray-50">
-                <h2 class="font-bold text-lg">{{ t('executionHistory') }}</h2>
+                <div>
+                    <h2 class="font-bold text-lg">
+                        <template v-if="scheduledTaskHistoryFilter">{{ t('scheduledTaskHistory') }}: {{ scheduledTaskHistoryFilter.name }}</template>
+                        <template v-else>{{ t('executionHistory') }}</template>
+                    </h2>
+                </div>
                 <div class="flex gap-2">
+                    <button v-if="scheduledTaskHistoryFilter" @click="scheduledTaskHistoryFilter = null; currentView = 'scheduled'; fetchHistory()" class="text-gray-600 text-sm hover:underline">&larr; {{ t('backToTasks') }}</button>
                     <button @click="clearHistory" class="text-red-600 text-sm hover:underline">{{ t('clearLogs') }}</button>
                     <button @click="fetchHistory" class="text-blue-600 text-sm hover:underline">{{ t('refresh') }}</button>
                 </div>
@@ -1452,6 +1712,7 @@
                             fetchScripts()
                             fetchHistory()
                             fetchUpdates()
+                            fetchScheduledTasks()
                         } else {
                             alert(t('loginFailed'))
                         }
@@ -1615,6 +1876,86 @@
                         return dateStr;
                     }
                 }
+
+                const describeCron = (expr) => {
+                    if (!expr) return ''
+                    const parts = expr.trim().split(/\s+/)
+                    if (parts.length !== 5) return ''
+                    const [min, hour, dom, mon, dow] = parts
+                    const zh = lang.value === 'zh'
+
+                    const parseField = (f, singleLabel, multiLabel) => {
+                        if (f === '*') return multiLabel
+                        const stepMatch = f.match(/^\*\/(\d+)$/)
+                        if (stepMatch) {
+                            const n = parseInt(stepMatch[1])
+                            return singleLabel.replace('{n}', n)
+                        }
+                        return null
+                    }
+
+                    const rangeDesc = (field, unit) => {
+                        const parts = field.split(',')
+                        return parts.map(p => {
+                            const range = p.match(/^(\d+)-(\d+)$/)
+                            if (range) return `${range[1]}-${range[2]}${unit}`
+                            const step = p.match(/^(\d+)\/(\d+)$/)
+                            if (step) return `${step[1]}${unit}开始每${step[2]}${unit}`
+                            return `${p}${unit}`
+                        }).join(',')
+                    }
+
+                    // Common patterns
+                    if (min === '*') return zh ? '每分钟执行' : 'Every minute'
+                    if (/^\*\/\d+$/.test(min) && hour === '*' && dom === '*' && mon === '*' && dow === '*') {
+                        const n = parseInt(min.replace('*/', ''))
+                        return zh ? `每${n}分钟执行` : `Every ${n} minutes`
+                    }
+                    if (min === '0' && /^\*\/\d+$/.test(hour) && dom === '*' && mon === '*' && dow === '*') {
+                        const n = parseInt(hour.replace('*/', ''))
+                        return zh ? `每${n}小时执行` : `Every ${n} hours`
+                    }
+                    if (min === '0' && hour === '0' && dom === '*' && mon === '*' && dow === '*') {
+                        return zh ? '每天午夜执行' : 'Daily at midnight'
+                    }
+                    if (min === '0' && hour === '*') {
+                        return zh ? '每小时整点执行' : 'Every hour on the hour'
+                    }
+                    if (/^\d+$/.test(min) && /^\d+$/.test(hour) && dom === '*' && mon === '*' && dow === '*') {
+                        return zh ? `每天 ${hour.padStart(2,'0')}:${min.padStart(2,'0')} 执行` : `Daily at ${hour.padStart(2,'0')}:${min.padStart(2,'0')}`
+                    }
+                    if (/^\d+$/.test(min) && /^\d+$/.test(hour) && dom === '*' && mon === '*' && /^[1-5]$/.test(dow)) {
+                        const weekdays = zh ? ['周一','周二','周三','周四','周五','周六','周日'] : ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
+                        return zh ? `每${weekdays[parseInt(dow)-1]} ${hour.padStart(2,'0')}:${min.padStart(2,'0')} 执行` : `Weekly on ${weekdays[parseInt(dow)-1]} at ${hour.padStart(2,'0')}:${min.padStart(2,'0')}`
+                    }
+                    if (min === '0' && hour === '0' && dom === '*' && mon === '*' && dow === '1-5') {
+                        return zh ? '工作日(周一至周五)午夜执行' : 'Weekdays at midnight'
+                    }
+                    if (/^\d+$/.test(min) && /^\d+$/.test(hour) && dom === '*' && mon === '*' && dow === '1-5') {
+                        return zh ? `工作日 ${hour.padStart(2,'0')}:${min.padStart(2,'0')} 执行` : `Weekdays at ${hour.padStart(2,'0')}:${min.padStart(2,'0')}`
+                    }
+                    if (/^\d+$/.test(min) && /^\d+$/.test(hour) && /^\d+$/.test(dom) && mon === '*' && dow === '*') {
+                        return zh ? `每月${dom}日 ${hour.padStart(2,'0')}:${min.padStart(2,'0')} 执行` : `Monthly on day ${dom} at ${hour.padStart(2,'0')}:${min.padStart(2,'0')}`
+                    }
+                    if (dom === '*' && mon === '*' && dow === '*') {
+                        const minDesc = parseField(min, zh ? '每{n}分钟' : 'every {n} min', min === '0' ? '整点' : `第${min}分`)
+                        const hourDesc = parseField(hour, zh ? '每{n}小时' : 'every {n} hrs', hour === '*' ? '每小时' : `${hour}点`)
+                        if (minDesc && hourDesc) return zh ? `${hourDesc} ${minDesc}` : `${hourDesc} ${minDesc}`
+                    }
+
+                    let desc = ''
+                    if (min !== '*') desc += zh ? `${rangeDesc(min, '分')} ` : `min:${rangeDesc(min, '')} `
+                    if (hour !== '*') desc += zh ? `${rangeDesc(hour, '时')} ` : `hr:${rangeDesc(hour, '')} `
+                    if (dom !== '*') desc += zh ? `${rangeDesc(dom, '日')} ` : `day:${rangeDesc(dom, '')} `
+                    if (mon !== '*') desc += zh ? `${rangeDesc(mon, '月')} ` : `mon:${rangeDesc(mon, '')} `
+                    if (dow !== '*') {
+                        const dayNames = zh ? ['日','一','二','三','四','五','六'] : ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
+                        const dows = dow.split(',').map(d => dayNames[parseInt(d)] || d).join(',')
+                        desc += zh ? `周${dows}` : dow
+                    }
+                    return desc.trim() || (zh ? '自定义' : 'Custom')
+                }
+
                 const hardwareInfo = ref(null)
 
                 // Shell
@@ -1661,6 +2002,12 @@
                 const executionList = ref([])
                 const viewingExecutionId = ref(null)
                 const viewingExecution = computed(() => executionList.value.find(e => e.execution_id === viewingExecutionId.value))
+                const groupFilteredScripts = computed(() => {
+                    if (!scheduledForm.value.group_id) return scriptList.value
+                    const group = groupList.value.find(g => g.id === scheduledForm.value.group_id)
+                    if (!group || !group.script_ids || group.script_ids.length === 0) return []
+                    return scriptList.value.filter(s => group.script_ids.some(sid => sid === s.id))
+                })
                 let executionPollTimer = null
 
                 // Updates
@@ -1918,6 +2265,44 @@
                         setDefault: 'Set Default',
                         unsetDefault: 'Unset Default',
                         customDisplayIp: 'Custom Display IP',
+                        scheduled: 'Scheduled',
+                        scheduledTasks: 'Scheduled Tasks',
+                        createTask: 'Create Task',
+                        editTask: 'Edit Task',
+                        description: 'Description',
+                        enabled: 'Enabled',
+                        cronExpression: 'Cron Expression',
+                        cronEveryMinute: 'Every Minute',
+                        cronEvery5Min: 'Every 5 min',
+                        cronEvery15Min: 'Every 15 min',
+                        cronEvery30Min: 'Every 30 min',
+                        cronEveryHour: 'Every Hour',
+                        cronEvery2Hours: 'Every 2 Hours',
+                        cronDaily: 'Daily (midnight)',
+                        cronEveryMorning: 'Every 9 AM',
+                        cronWeekly: 'Weekly (Mon)',
+                        cronMonthly: 'Monthly (1st)',
+                        taskType: 'Task Type',
+                        groupTask: 'Group Task',
+                        customTask: 'Custom Task',
+                        lastRun: 'Last Run',
+                        nextRun: 'Next Run',
+                        taskEnabled: 'Enabled',
+                        taskDisabled: 'Disabled',
+                        toggleTask: 'Toggle',
+                        confirmDeleteTask: 'Delete this scheduled task?',
+                        taskEnabledShort: 'Enabled',
+                        lastRunStatus: 'Last Status',
+                        enabled: 'On',
+                        disabled: 'Off',
+                        viewHistory: 'View History',
+                        selectGroup: 'Client Group',
+                        selectGroupPlaceholder: '-- Select a group --',
+                        selectScripts: 'Scripts',
+                        noSteps: 'No steps defined',
+                        scheduledTaskHistory: 'Scheduled Task History',
+                        backToTasks: 'Back to Tasks',
+                        noGroups: 'No groups available.',
                     },
                     zh: {
                         dashboardTitle: 'Roam 控制台',
@@ -2155,6 +2540,44 @@
                         setDefault: '设为默认',
                         unsetDefault: '取消默认',
                         customDisplayIp: '自定义展示 IP',
+                        scheduled: '定时任务',
+                        scheduledTasks: '定时任务管理',
+                        createTask: '创建任务',
+                        editTask: '编辑任务',
+                        description: '描述',
+                        enabled: '启用',
+                        cronExpression: 'Cron 表达式',
+                        cronEveryMinute: '每分钟',
+                        cronEvery5Min: '每5分钟',
+                        cronEvery15Min: '每15分钟',
+                        cronEvery30Min: '每30分钟',
+                        cronEveryHour: '每小时',
+                        cronEvery2Hours: '每2小时',
+                        cronDaily: '每天(午夜)',
+                        cronEveryMorning: '每天上午9点',
+                        cronWeekly: '每周一',
+                        cronMonthly: '每月1号',
+                        taskType: '任务类型',
+                        groupTask: '组任务',
+                        customTask: '自定义任务',
+                        lastRun: '上次执行',
+                        nextRun: '下次执行',
+                        taskEnabled: '已启用',
+                        taskDisabled: '已禁用',
+                        toggleTask: '启用/禁用',
+                        confirmDeleteTask: '确定删除此定时任务？',
+                        taskEnabledShort: '是否已启用',
+                        lastRunStatus: '上次运行状态',
+                        enabled: '已启用',
+                        disabled: '已禁用',
+                        viewHistory: '查看历史',
+                        selectGroup: '客户端分组',
+                        selectGroupPlaceholder: '-- 选择分组 --',
+                        selectScripts: '选择脚本',
+                        noSteps: '暂未定义步骤',
+                        scheduledTaskHistory: '定时任务执行历史',
+                        backToTasks: '返回任务列表',
+                        noGroups: '暂无可用分组。',
                     }
                 }
 
@@ -2377,6 +2800,7 @@
                     checkAuth()
                     // fetchClients() - will be handled by interval or after login
                     fetchServerInfo()
+                    fetchScheduledTasks()
                 })
 
                 const getAuthHeaders = () => {
@@ -3582,6 +4006,9 @@
                             page: historyPage.value,
                             limit: historyLimit.value
                         });
+                        if (scheduledTaskHistoryFilter.value) {
+                            params.set('scheduled_task_id', scheduledTaskHistoryFilter.value.id)
+                        }
                         const res = await apiFetch(`/api/history?${params.toString()}`)
                         if (res.ok) {
                             const data = await res.json()
@@ -3800,6 +4227,197 @@
                 watch(updatePage, () => {
                     fetchUpdates()
                 })
+
+                const scheduledTasks = ref([])
+                const showScheduledModal = ref(false)
+                const scheduledForm = ref({
+                    name: '',
+                    description: '',
+                    cron_expression: '',
+                    task_type: 'group',
+                    group_id: null,
+                    script_ids: [],
+                    client_ids: [],
+                    steps: [],
+                    enabled: true
+                })
+                const isEditingScheduled = ref(false)
+                const editingScheduledId = ref('')
+                const scheduledTaskHistoryFilter = ref(null) // scheduled_task_id to filter history
+
+                const fetchScheduledTasks = async () => {
+                    try {
+                        const res = await apiFetch('/api/scheduled-tasks')
+                        if (res.ok) {
+                            scheduledTasks.value = await res.json()
+                        }
+                    } catch (e) {
+                        console.error(e)
+                    }
+                }
+
+                const openCreateScheduled = () => {
+                    isEditingScheduled.value = false
+                    editingScheduledId.value = ''
+                    scheduledForm.value = {
+                        name: '',
+                        description: '',
+                        cron_expression: '',
+                        task_type: 'group',
+                        group_id: null,
+                        script_ids: [],
+                        client_ids: [],
+                        steps: [],
+                        enabled: true
+                    }
+                    fetchGroups()
+                    fetchScripts()
+                    showScheduledModal.value = true
+                }
+
+                const unmapScheduledSteps = (steps) => {
+                    if (!steps || !Array.isArray(steps) || steps.length === 0) return []
+                    return steps.map(s => {
+                        const p = s.payload || {}
+                        if (s.type === 'Shell') {
+                            return { type: 'Shell', cmd: p.cmd || '', args: (p.args || []).join(' '), local_path: '', remote_path: '', src_path: '', dest_path: '', path: '', url: '', method: 'GET', body: '', server_save_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path_is_absolute: false, dest_path_is_absolute: false, path_is_absolute: false, run_on_server: false }
+                        } else if (s.type === 'Upload') {
+                            return { type: 'Upload', cmd: '', args: '', local_path: p.local_path || '', remote_path: p.remote_path || '', src_path: '', dest_path: '', path: '', url: '', method: 'GET', body: '', server_save_path: '', local_path_is_absolute: !!p.local_path_is_absolute, remote_path_is_absolute: !!p.remote_path_is_absolute, src_path_is_absolute: false, dest_path_is_absolute: false, path_is_absolute: false, run_on_server: false }
+                        } else if (s.type === 'Download') {
+                            return { type: 'Download', cmd: '', args: '', local_path: '', remote_path: p.remote_path || '', src_path: '', dest_path: '', path: '', url: '', method: 'GET', body: '', server_save_path: p.server_save_path || '', local_path_is_absolute: false, remote_path_is_absolute: !!p.remote_path_is_absolute, src_path_is_absolute: false, dest_path_is_absolute: false, path_is_absolute: false, browser_download: !!p.browser_download, run_on_server: false }
+                        } else if (s.type === 'UploadDir') {
+                            return { type: 'UploadDir', cmd: '', args: '', local_path: p.local_path || '', remote_path: p.remote_path || '', src_path: '', dest_path: '', path: '', url: '', method: 'GET', body: '', server_save_path: '', local_path_is_absolute: !!p.local_path_is_absolute, remote_path_is_absolute: !!p.remote_path_is_absolute, src_path_is_absolute: false, dest_path_is_absolute: false, path_is_absolute: false, run_on_server: false }
+                        } else if (s.type === 'DownloadDir') {
+                            return { type: 'DownloadDir', cmd: '', args: '', local_path: '', remote_path: p.remote_path || '', src_path: '', dest_path: '', path: '', url: '', method: 'GET', body: '', server_save_path: p.server_save_path || '', local_path_is_absolute: false, remote_path_is_absolute: !!p.remote_path_is_absolute, src_path_is_absolute: false, dest_path_is_absolute: false, path_is_absolute: false, browser_download: !!p.browser_download, run_on_server: false }
+                        } else if (s.type === 'Copy' || s.type === 'Move') {
+                            return { type: s.type, cmd: '', args: '', local_path: '', remote_path: '', src_path: p.src_path || '', dest_path: p.dest_path || '', path: '', url: '', method: 'GET', body: '', server_save_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path_is_absolute: !!p.src_path_is_absolute, dest_path_is_absolute: !!p.dest_path_is_absolute, path_is_absolute: false, run_on_server: false }
+                        } else if (s.type === 'Delete') {
+                            return { type: 'Delete', cmd: '', args: '', local_path: '', remote_path: '', src_path: '', dest_path: '', path: p.path || '', url: '', method: 'GET', body: '', server_save_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path_is_absolute: false, dest_path_is_absolute: false, path_is_absolute: !!p.path_is_absolute, run_on_server: false }
+                        } else if (s.type === 'HttpRequest') {
+                            return { type: 'HttpRequest', cmd: '', args: '', local_path: '', remote_path: '', src_path: '', dest_path: '', path: '', url: p.url || '', method: p.method || 'GET', headers: p.headers || [], query_params: p.query_params || [], body: p.body || '', server_save_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path_is_absolute: false, dest_path_is_absolute: false, path_is_absolute: false, run_on_server: false }
+                        }
+                        return { type: 'Shell', cmd: '', args: '', local_path: '', remote_path: '', src_path: '', dest_path: '', path: '', url: '', method: 'GET', body: '', server_save_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path_is_absolute: false, dest_path_is_absolute: false, path_is_absolute: false, run_on_server: false }
+                    })
+                }
+
+                const openEditScheduled = (task) => {
+                    isEditingScheduled.value = true
+                    editingScheduledId.value = task.id
+                    scheduledForm.value = {
+                        name: task.name || '',
+                        description: task.description || '',
+                        cron_expression: task.cron_expression || '',
+                        task_type: task.task_type || 'group',
+                        group_id: task.group_id || null,
+                        script_ids: task.script_ids || [],
+                        client_ids: task.client_ids || [],
+                        steps: task.task_type === 'custom' ? unmapScheduledSteps(task.steps) : [],
+                        enabled: task.enabled !== false
+                    }
+                    fetchGroups()
+                    fetchScripts()
+                    showScheduledModal.value = true
+                }
+
+                const saveScheduled = async () => {
+                    try {
+                        const url = isEditingScheduled.value
+                            ? `/api/scheduled-tasks/${editingScheduledId.value}`
+                            : '/api/scheduled-tasks'
+                        const method = isEditingScheduled.value ? 'PUT' : 'POST'
+                        const body = {
+                            ...scheduledForm.value,
+                            steps: scheduledForm.value.task_type === 'custom'
+                                ? mapScheduledSteps(scheduledForm.value.steps)
+                                : []
+                        }
+                        const res = await apiFetch(url, {
+                            method,
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body)
+                        })
+                        if (res.ok) {
+                            showScheduledModal.value = false
+                            fetchScheduledTasks()
+                        } else {
+                            const txt = await res.text()
+                            alert('Failed to save scheduled task: ' + txt)
+                        }
+                    } catch (e) {
+                        alert(e.message)
+                    }
+                }
+
+                const deleteScheduled = async (id) => {
+                    if (!confirm(t('confirmDeleteTask'))) return
+                    try {
+                        const res = await apiFetch(`/api/scheduled-tasks/${id}`, { method: 'DELETE' })
+                        if (res.ok) {
+                            fetchScheduledTasks()
+                        } else {
+                            alert('Failed to delete scheduled task')
+                        }
+                    } catch (e) {
+                        alert(e.message)
+                    }
+                }
+
+                const toggleScheduled = async (id, enabled) => {
+                    try {
+                        const res = await apiFetch(`/api/scheduled-tasks/${id}/toggle`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ enabled })
+                        })
+                        if (res.ok) {
+                            fetchScheduledTasks()
+                        } else {
+                            alert('Failed to toggle scheduled task')
+                        }
+                    } catch (e) {
+                        alert(e.message)
+                    }
+                }
+
+                const viewScheduledHistory = (task) => {
+                    scheduledTaskHistoryFilter.value = { id: task.id, name: task.name }
+                    currentView.value = 'history'
+                    historyPage.value = 1
+                    fetchHistory()
+                }
+
+                const addScheduledStep = () => {
+                    scheduledForm.value.steps.push({ type: 'Shell', cmd: '', args: '', local_path: '', remote_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path: '', dest_path: '', src_path_is_absolute: false, dest_path_is_absolute: false, path: '', path_is_absolute: false, url: '', method: 'GET', headers: [], query_params: [], body: '', run_on_server: false, server_save_path: '' })
+                }
+
+                const removeScheduledStep = (index) => {
+                    scheduledForm.value.steps.splice(index, 1)
+                }
+
+                const mapScheduledSteps = (steps) => {
+                    return steps.map(s => {
+                        if (s.type === 'Shell') {
+                            return { type: 'Shell', payload: { cmd: s.cmd, args: s.args ? s.args.split(' ').filter(a => a) : [] } }
+                        } else if (s.type === 'Upload') {
+                            return { type: 'Upload', payload: { local_path: s.local_path, remote_path: s.remote_path, local_path_is_absolute: !!s.local_path_is_absolute, remote_path_is_absolute: !!s.remote_path_is_absolute } }
+                        } else if (s.type === 'Download') {
+                            return { type: 'Download', payload: { remote_path: s.remote_path, browser_download: !!s.browser_download, remote_path_is_absolute: !!s.remote_path_is_absolute, server_save_path: s.server_save_path || '' } }
+                        } else if (s.type === 'UploadDir') {
+                            return { type: 'UploadDir', payload: { local_path: s.local_path, remote_path: s.remote_path, local_path_is_absolute: !!s.local_path_is_absolute, remote_path_is_absolute: !!s.remote_path_is_absolute } }
+                        } else if (s.type === 'DownloadDir') {
+                            return { type: 'DownloadDir', payload: { remote_path: s.remote_path, browser_download: !!s.browser_download, remote_path_is_absolute: !!s.remote_path_is_absolute, server_save_path: s.server_save_path || '' } }
+                        } else if (s.type === 'Copy') {
+                            return { type: 'Copy', payload: { src_path: s.src_path, dest_path: s.dest_path, src_path_is_absolute: !!s.src_path_is_absolute, dest_path_is_absolute: !!s.dest_path_is_absolute } }
+                        } else if (s.type === 'Move') {
+                            return { type: 'Move', payload: { src_path: s.src_path, dest_path: s.dest_path, src_path_is_absolute: !!s.src_path_is_absolute, dest_path_is_absolute: !!s.dest_path_is_absolute } }
+                        } else if (s.type === 'Delete') {
+                            return { type: 'Delete', payload: { path: s.path, path_is_absolute: !!s.path_is_absolute } }
+                        } else if (s.type === 'HttpRequest') {
+                            return { type: 'HttpRequest', payload: { url: s.url, method: s.method || 'GET', headers: s.headers || [], query_params: s.query_params || [], body: s.body || '' } }
+                        }
+                        return null
+                    }).filter(s => s !== null)
+                }
 
                 const openUploadUpdateModal = () => {
                     activeModal.value = 'uploadUpdate'
@@ -4148,13 +4766,15 @@
                     executionList, viewingExecutionId, viewingExecution,
                     selectedClientIds, currentView, fetchScripts,
                     updateList, selectedUpdate, newUpdate, updateFileInput, fetchUpdates, openUploadUpdateModal, uploadUpdate, deleteUpdate, openDeployUpdate, triggerDeploy, selectAllOnlineClients, updatePage, updateLimit, totalUpdates, totalUpdatePages, updatePageNumbers,
+                    scheduledTasks, fetchScheduledTasks, showScheduledModal, scheduledForm, isEditingScheduled, openCreateScheduled, openEditScheduled, saveScheduled, deleteScheduled, toggleScheduled,
+                    viewScheduledHistory, scheduledTaskHistoryFilter, addScheduledStep, removeScheduledStep, unmapScheduledSteps, groupFilteredScripts,
                     filteredDeployClients, deploySearchQuery, canUpdateClient,
                     clientSelectionSearch, filteredSelectionClients,
                     areAllGroupSelected, toggleSelectAllGroupClients,
                     areAllRunSelected, toggleSelectAllRunClients,
                     closeModal, formatBytes, navigateUp, joinPath,
                     isMaximized, toggleMaximize, isMenuOpen, toggleMenu,
-                    t, toggleLang, lang, formatDate,
+                    t, toggleLang, lang, formatDate, describeCron,
                     currentLogItem, downloadLogFile, downloadArtifact,
                     // Auth exports
                     authEnabled, isLoggedIn, username, loginForm, passwordForm, showPasswordModal,
