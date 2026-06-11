@@ -12,6 +12,8 @@ pub struct ServerConfig {
     pub tls_cert_path: Option<String>,
     pub tls_key_path: Option<String>,
     pub download_url_prefix: Option<String>,
+    pub compress_threshold: u64,
+    pub client_data_retention_days: u64,
 }
 
 impl ServerConfig {
@@ -25,7 +27,9 @@ impl ServerConfig {
             .set_default("web_jwt_secret", "roam-secret-key")?
             .set_default("tls_cert_path", None::<String>)?
             .set_default("tls_key_path", None::<String>)?
-            .set_default("download_url_prefix", None::<String>)?;
+            .set_default("download_url_prefix", None::<String>)?
+            .set_default("compress_threshold", 100 * 1024 * 1024)?  // 100MB
+            .set_default("client_data_retention_days", 7u64)?;
 
         // 1. Prioritize loading config from executable directory (Production/Service)
         let mut config_found = false;

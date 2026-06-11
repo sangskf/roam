@@ -1209,6 +1209,10 @@
                                                 <input v-model="step.remote_path" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="/tmp/file.txt">
                                                 <button type="button" @click="step.remote_path_is_absolute = !step.remote_path_is_absolute" class="px-2 py-1 text-xs rounded border shrink-0 whitespace-nowrap" :class="step.remote_path_is_absolute ? 'bg-orange-50 border-orange-300 text-orange-600' : 'bg-gray-50 border-gray-300 text-gray-500'">{{ step.remote_path_is_absolute ? '绝对' : '相对' }}</button>
                                             </div>
+                                            <label class="flex items-center text-sm mt-2">
+                                                <input type="checkbox" v-model="step.compress" class="mr-2">
+                                                {{ t('compressTransfer') }}
+                                            </label>
                                         </div>
                                         <div v-if="step.type === 'Download'">
                                             <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('remotePath') }}</label>
@@ -1221,6 +1225,10 @@
                                             <label class="flex items-center text-sm">
                                                 <input type="checkbox" v-model="step.browser_download" class="mr-2">
                                                 {{ t('browserDownload') }}
+                                            </label>
+                                            <label class="flex items-center text-sm mt-1">
+                                                <input type="checkbox" v-model="step.compress" class="mr-2">
+                                                {{ t('compressTransfer') }}
                                             </label>
                                         </div>
                                         <div v-if="step.type === 'UploadDir'">
@@ -2191,6 +2199,7 @@
                         uploadFile: 'Upload File',
                         downloadFile: 'Download File',
                         browserDownload: 'Direct Browser Download',
+                        compressTransfer: 'Compress (gzip) for faster transfer',
                         serverSavePath: 'Server Save Path',
                         serverSavePathPlaceholder: 'Leave empty for default path',
                         uploadDir: 'Upload Directory',
@@ -2467,6 +2476,7 @@
                         uploadFile: '上传文件',
                         downloadFile: '下载文件',
                         browserDownload: '使用浏览器直接下载',
+                        compressTransfer: '压缩传输 (gzip)',
                         serverSavePath: '服务端保存路径',
                         serverSavePathPlaceholder: '留空使用默认路径',
                         uploadDir: '上传文件夹',
@@ -3793,7 +3803,7 @@
                 }
 
                 const addStep = () => {
-                    newScript.value.steps.push({ type: 'Shell', cmd: '', args: '', local_path: '', remote_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path_is_absolute: false, dest_path_is_absolute: false, path_is_absolute: false, url: '', method: 'GET', headers: [], query_params: [], body: '', run_on_server: false, server_save_path: '' })
+                    newScript.value.steps.push({ type: 'Shell', cmd: '', args: '', local_path: '', remote_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path_is_absolute: false, dest_path_is_absolute: false, path_is_absolute: false, url: '', method: 'GET', headers: [], query_params: [], body: '', run_on_server: false, server_save_path: '', compress: false })
                 }
 
                 const removeStep = (index) => {

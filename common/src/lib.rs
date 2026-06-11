@@ -54,7 +54,7 @@ pub enum CommandPayload {
     // Server provides a URL for the client to download file FROM
     DownloadFile { url: String, dest_path: String },
     // Server provides a URL for the client to upload file TO
-    UploadFile { src_path: String, upload_url: String },
+    UploadFile { src_path: String, upload_url: String, #[serde(default)] compress: Option<bool> },
     ListDir { path: String },
     GetHardwareInfo,
     UpdateClient { url: String },

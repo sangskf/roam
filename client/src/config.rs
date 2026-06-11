@@ -10,6 +10,7 @@ pub struct ClientConfig {
     pub tls_insecure: bool,
     pub chunk_size: usize,
     pub max_concurrent_transfers: usize,
+    pub compress_threshold: u64,
 }
 
 impl ClientConfig {
@@ -21,7 +22,8 @@ impl ClientConfig {
             .set_default("alias", None::<String>)?
             .set_default("tls_insecure", false)?
             .set_default("chunk_size", 10 * 1024 * 1024)?
-            .set_default("max_concurrent_transfers", 4)?;
+            .set_default("max_concurrent_transfers", 4)?
+            .set_default("compress_threshold", 100 * 1024 * 1024)?;  // 100MB
 
         // 1. Prioritize loading config from executable directory (Production/Service)
         let mut config_found = false;

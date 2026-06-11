@@ -16,6 +16,9 @@ use std::time::Duration;
 use sqlx::Row;
 use sha2::{Sha256, Digest};
 use hex;
+use std::io::Write;
+use flate2::read::{GzDecoder as GzDecoderRead, GzEncoder as GzEncoderRead};
+use flate2::Compression;
 
 use crate::state::{AppState, ClientConnection, ScriptGroup, ScriptStep, ExecutionProgress};
 use common::{Message, CommandPayload, CommandResult, FileInfo};
@@ -657,10 +660,12 @@ pub(crate) async fn run_script_task(state: Arc<AppState>, client_id: Uuid, scrip
         let base_url = get_download_base_url(&state, Some(client_id), Some(&server_host));
 
         let mut pending_server_save: Option<(Uuid, String)> = None;
+        let mut step_temp_files: Vec<String> = Vec::new();
 
         let cmd_payload_result = match step {
             ScriptStep::Shell { cmd, args, .. } => Ok(CommandPayload::ShellExec { cmd: cmd.clone(), args: args.clone() }),
-            ScriptStep::Upload { local_path, remote_path, local_path_is_absolute, .. } => {
+            ScriptStep::Upload { local_path, remote_path, local_path_is_absolute, compress, .. } => {
+                let should_compress = compress.unwrap_or(false);
                 if local_path_is_absolute.unwrap_or(false) {
                     let expanded = expand_path(local_path);
                     let file_name = std::path::Path::new(&expanded).file_name().unwrap_or_default().to_string_lossy();
@@ -668,17 +673,50 @@ pub(crate) async fn run_script_task(state: Arc<AppState>, client_id: Uuid, scrip
                     let staging_path = format!("uploads/staging/{}", staging_name);
                     match tokio::fs::copy(&expanded, &staging_path).await {
                         Ok(_) => {
-                            let download_url = format!("{}/api/files/download/staging/{}", base_url, staging_name);
-                            Ok(CommandPayload::DownloadFile { url: download_url, dest_path: remote_path.clone() })
+                            // Gzip the staging file for faster client download (if compress enabled and file exceeds threshold)
+                            let should_gzip = should_compress && {
+                                std::fs::metadata(&staging_path).map(|m| m.len()).unwrap_or(0) >= state.config.compress_threshold
+                            };
+                            if should_gzip {
+                                if let Some(gz_path) = try_gzip_staging_file(&staging_path).await {
+                                    step_temp_files.push(gz_path);
+                                    let gz_name = format!("{}.gz", staging_name);
+                                    let download_url = format!("{}/api/files/download/staging/{}", base_url, gz_name);
+                                    Ok(CommandPayload::DownloadFile { url: download_url, dest_path: remote_path.clone() })
+                                } else {
+                                    let download_url = format!("{}/api/files/download/staging/{}", base_url, staging_name);
+                                    Ok(CommandPayload::DownloadFile { url: download_url, dest_path: remote_path.clone() })
+                                }
+                            } else {
+                                let download_url = format!("{}/api/files/download/staging/{}", base_url, staging_name);
+                                Ok(CommandPayload::DownloadFile { url: download_url, dest_path: remote_path.clone() })
+                            }
                         },
                         Err(e) => Err(format!("Failed to copy absolute path file: {}", e))
                     }
                 } else {
-                    let download_url = format!("{}/api/files/download/staging/{}", base_url, local_path);
-                    Ok(CommandPayload::DownloadFile { url: download_url, dest_path: remote_path.clone() })
+                    let staging_path = format!("uploads/staging/{}", local_path);
+                    // Gzip the staging file for faster client download (if compress enabled and file exceeds threshold)
+                    let should_gzip = should_compress && {
+                        std::fs::metadata(&staging_path).map(|m| m.len()).unwrap_or(0) >= state.config.compress_threshold
+                    };
+                    if should_gzip {
+                        if let Some(gz_path) = try_gzip_staging_file(&staging_path).await {
+                            step_temp_files.push(gz_path);
+                            let gz_name = format!("{}.gz", local_path);
+                            let download_url = format!("{}/api/files/download/staging/{}", base_url, gz_name);
+                            Ok(CommandPayload::DownloadFile { url: download_url, dest_path: remote_path.clone() })
+                        } else {
+                            let download_url = format!("{}/api/files/download/staging/{}", base_url, local_path);
+                            Ok(CommandPayload::DownloadFile { url: download_url, dest_path: remote_path.clone() })
+                        }
+                    } else {
+                        let download_url = format!("{}/api/files/download/staging/{}", base_url, local_path);
+                        Ok(CommandPayload::DownloadFile { url: download_url, dest_path: remote_path.clone() })
+                    }
                 }
             },
-            ScriptStep::Download { remote_path, browser_download, server_save_path, .. } => {
+            ScriptStep::Download { remote_path, browser_download, server_save_path, compress, .. } => {
                 let upload_id = Uuid::new_v4();
                 let upload_url = format!("{}/api/files/client-upload/{}", base_url, upload_id);
 
@@ -698,7 +736,7 @@ pub(crate) async fn run_script_task(state: Arc<AppState>, client_id: Uuid, scrip
                     }
                 }
 
-                Ok(CommandPayload::UploadFile { src_path: remote_path.clone(), upload_url })
+                Ok(CommandPayload::UploadFile { src_path: remote_path.clone(), upload_url, compress: *compress })
             },
             ScriptStep::UploadDir { local_path, remote_path, local_path_is_absolute, .. } => {
                 let (src_dir, zip_name) = if local_path_is_absolute.unwrap_or(false) {
@@ -855,6 +893,11 @@ pub(crate) async fn run_script_task(state: Arc<AppState>, client_id: Uuid, scrip
                 }
             }
 
+            // Clean up temp files created for this step (e.g. gzip staging)
+            for path in &step_temp_files {
+                let _ = tokio::fs::remove_file(path).await;
+            }
+
             if !step_success {
                 success = false;
                 break;
@@ -870,7 +913,7 @@ pub(crate) async fn run_script_task(state: Arc<AppState>, client_id: Uuid, scrip
             state.cmd_history_map.insert(cmd_id, history_id);
 
             let is_file_transfer = matches!(cmd_payload, CommandPayload::UploadFile { .. } | CommandPayload::DownloadFile { .. });
-            let step_timeout = if is_file_transfer { 600 } else { 300 };
+            let step_timeout = if is_file_transfer { 3600 } else { 300 };
 
             let msg = Message::Command {
                 id: cmd_id,
@@ -973,6 +1016,9 @@ pub(crate) async fn run_script_task(state: Arc<AppState>, client_id: Uuid, scrip
                     progress.logs.push(log_timeout);
                 }
                 success = false;
+                for path in &step_temp_files {
+                    let _ = tokio::fs::remove_file(path).await;
+                }
                 break;
             }
 
@@ -983,7 +1029,14 @@ pub(crate) async fn run_script_task(state: Arc<AppState>, client_id: Uuid, scrip
                 progress.logs.push(log_disc);
             }
             success = false;
+            for path in &step_temp_files {
+                let _ = tokio::fs::remove_file(path).await;
+            }
             break;
+        }
+
+        for path in &step_temp_files {
+            let _ = tokio::fs::remove_file(path).await;
         }
     }
     
@@ -1201,8 +1254,73 @@ pub async fn upload_file_client(
     }
     
     info!("File uploaded by client for command {}: {}", id, file_path);
-    
+
+    // Decompress if gzip-compressed (synchronous to avoid races)
+    if let Err(e) = maybe_decompress_gzip(&file_path).await {
+        warn!("Failed to decompress uploaded file {}: {}", file_path, e);
+    }
+
     (StatusCode::OK, "Upload successful").into_response()
+}
+
+/// Check if a file starts with gzip magic bytes and decompress it in-place.
+async fn maybe_decompress_gzip(file_path: &str) -> Result<(), String> {
+    use tokio::io::AsyncReadExt;
+
+    // Read only the first 2 bytes to check gzip magic
+    let mut file = match tokio::fs::File::open(file_path).await {
+        Ok(f) => f,
+        Err(_) => return Ok(()),
+    };
+    let mut magic = [0u8; 2];
+    if file.read_exact(&mut magic).await.is_err() || magic != [0x1f, 0x8b] {
+        return Ok(()); // Not gzip
+    }
+    drop(file);
+
+    info!("Decompressing gzip file: {}", file_path);
+
+    let path = file_path.to_string();
+    let result = tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let gz_file = std::fs::File::open(&path).map_err(|e| format!("Failed to open gzip: {}", e))?;
+        let temp_path = format!("{}.decompressing", &path);
+        let mut out_file = std::fs::File::create(&temp_path).map_err(|e| format!("Failed to create temp: {}", e))?;
+        let mut decoder = GzDecoderRead::new(gz_file);
+        std::io::copy(&mut decoder, &mut out_file).map_err(|e| format!("Decompression failed: {}", e))?;
+        drop(out_file);
+        std::fs::rename(&temp_path, &path).map_err(|e| format!("Failed to replace with decompressed: {}", e))?;
+        Ok(())
+    }).await;
+
+    match result {
+        Ok(Ok(())) => {
+            info!("Decompressed: {}", file_path);
+            Ok(())
+        },
+        Ok(Err(e)) => Err(e),
+        Err(e) => Err(format!("Join error: {}", e)),
+    }
+}
+
+/// Gzip a staging file for faster client download. Returns the .gz path on success.
+async fn try_gzip_staging_file(staging_path: &str) -> Option<String> {
+    let gz_path = format!("{}.gz", staging_path);
+    let staging = staging_path.to_string();
+    let gz = gz_path.clone();
+
+    let result = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+        let src = std::fs::File::open(&staging)?;
+        let mut encoder = GzEncoderRead::new(std::io::BufReader::new(src), Compression::default());
+        let mut dst = std::fs::File::create(&gz)?;
+        std::io::copy(&mut encoder, &mut dst)?;
+        dst.flush()?;
+        Ok(())
+    }).await;
+
+    match result {
+        Ok(Ok(())) => Some(gz_path),
+        _ => None,
+    }
 }
 
 // API: Chunked Upload - Receive a single chunk
@@ -1280,6 +1398,11 @@ pub async fn complete_chunked_upload(
         warn!("Failed to flush output for {}: {}", cmd_id, e);
     }
     drop(out_file);
+
+    // Decompress if gzip-compressed (synchronous to avoid races)
+    if let Err(e) = maybe_decompress_gzip(&out_path).await {
+        warn!("Failed to decompress chunked upload {} ({}): {}", cmd_id, out_path, e);
+    }
 
     // Cleanup chunk directory (log error on failure instead of silently ignoring)
     if let Err(e) = tokio::fs::remove_dir_all(&chunk_dir).await {

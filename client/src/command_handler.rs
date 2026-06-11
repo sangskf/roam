@@ -3,13 +3,16 @@ use sysinfo::System;
 use tokio::process::Command;
 use tokio::io::{AsyncWriteExt, AsyncSeekExt, AsyncReadExt};
 use std::fs;
-use std::io::SeekFrom;
+use std::io::{SeekFrom, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{info, error};
+use tracing::{info, error, warn};
 use walkdir::WalkDir;
 use zip::write::FileOptions;
+use flate2::read::GzEncoder;
+use flate2::write::GzDecoder;
+use flate2::Compression;
 
 use common::{CommandPayload, CommandResult, HardwareInfo, FileInfo, KeyValuePair};
 
@@ -110,6 +113,58 @@ fn build_http_client(tls_insecure: bool) -> Result<reqwest::Client, String> {
         .timeout(Duration::from_secs(3600))
         .build()
         .map_err(|e| format!("Failed to build http client: {}", e))
+}
+
+/// Gzip a file to a temporary file and return the temp path.
+/// The temp file is placed alongside the source to avoid cross-filesystem moves.
+fn gzip_file_to_temp(src: &Path) -> Result<PathBuf, String> {
+    let src_file = std::fs::File::open(src).map_err(|e| format!("Failed to open {} for compression: {}", src.display(), e))?;
+    let reader = std::io::BufReader::new(src_file);
+    let mut encoder = GzEncoder::new(reader, Compression::default());
+
+    let temp_path = {
+        let _stem = src.file_name().unwrap_or_default().to_string_lossy();
+        let dir = src.parent().unwrap_or_else(|| Path::new("."));
+        let mut p = dir.join(format!(".roam_gzip_{}", uuid::Uuid::new_v4()));
+        p.set_extension("gz");
+        p
+    };
+    let mut dst_file = std::fs::File::create(&temp_path).map_err(|e| format!("Failed to create temp gzip file: {}", e))?;
+    std::io::copy(&mut encoder, &mut dst_file).map_err(|e| format!("Failed to gzip file: {}", e))?;
+    dst_file.flush().map_err(|e| format!("Failed to flush temp gzip file: {}", e))?;
+    drop(dst_file);
+
+    let orig_size = std::fs::metadata(src).map(|m| m.len()).unwrap_or(0);
+    let gz_size = std::fs::metadata(&temp_path).map(|m| m.len()).unwrap_or(0);
+    info!("Compressed {} ({} bytes → {} bytes, {:.1}%)",
+        src.display(), orig_size, gz_size,
+        if orig_size > 0 { (gz_size as f64 / orig_size as f64) * 100.0 } else { 0.0 });
+
+    Ok(temp_path)
+}
+
+/// Check if a file starts with gzip magic bytes and decompress it in-place if so.
+/// Uses a temp file for atomic replacement.
+fn decompress_gzip_in_place(path: &Path) -> Result<(), String> {
+    // Read first 2 bytes to check gzip magic
+    let mut magic = [0u8; 2];
+    let mut file = std::fs::File::open(path).map_err(|e| format!("Failed to open {} for decompression check: {}", path.display(), e))?;
+    if file.read_exact(&mut magic).is_err() || magic != [0x1f, 0x8b] {
+        return Ok(()); // Not gzip compressed, nothing to do
+    }
+    drop(file);
+
+    info!("Decompressing gzip file: {}", path.display());
+    let temp_path = path.with_extension(format!(".roam_gunzip_{}", uuid::Uuid::new_v4()));
+
+    let gz_file = std::fs::File::open(path).map_err(|e| format!("Failed to open gzip file: {}", e))?;
+    let mut decoder = GzDecoder::new(std::fs::File::create(&temp_path).map_err(|e| format!("Failed to create temp file: {}", e))?);
+    std::io::copy(&mut std::io::BufReader::new(gz_file), &mut decoder).map_err(|e| format!("Failed to decompress: {}", e))?;
+    let _ = decoder.finish().map_err(|e| format!("Failed to finish decompression: {}", e))?;
+
+    std::fs::rename(&temp_path, path).map_err(|e| format!("Failed to replace with decompressed file: {}", e))?;
+    info!("Decompressed: {}", path.display());
+    Ok(())
 }
 
 async fn single_download(url: &str, dest_path: &Path, client: &reqwest::Client, progress_tx: &Option<tokio::sync::mpsc::Sender<String>>) -> Result<(), String> {
@@ -361,7 +416,7 @@ async fn chunked_upload(file_path: &Path, upload_url: &str, client: &reqwest::Cl
     Ok(())
 }
 
-pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool, chunk_size: usize, max_concurrent: usize, progress_tx: Option<tokio::sync::mpsc::Sender<String>>) -> CommandResult {
+pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool, chunk_size: usize, max_concurrent: usize, progress_tx: Option<tokio::sync::mpsc::Sender<String>>, compress_threshold: u64) -> CommandResult {
     match cmd {
         CommandPayload::ShellExec { cmd, args } => {
             info!("Executing shell command: {} {:?}", cmd, args);
@@ -535,11 +590,17 @@ pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool, chunk_size:
             let dest = expand_path(&dest_path);
 
             match chunked_download(&url, &dest, &client, chunk_size, max_concurrent, &progress_tx).await {
-                Ok(_) => CommandResult::Success(format!("File downloaded to {}", dest_path)),
+                Ok(_) => {
+                    // Decompress in-place if the downloaded file is gzip compressed
+                    if let Err(e) = decompress_gzip_in_place(&dest) {
+                        warn!("Failed to decompress downloaded file: {}", e);
+                    }
+                    CommandResult::Success(format!("File downloaded to {}", dest_path))
+                },
                 Err(e) => CommandResult::Error(e),
             }
         }
-        CommandPayload::UploadFile { src_path, upload_url } => {
+        CommandPayload::UploadFile { src_path, upload_url, compress } => {
             let expanded = expand_path(&src_path);
             let abs_path = if expanded.is_absolute() {
                 expanded
@@ -547,16 +608,46 @@ pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool, chunk_size:
                 std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(&expanded)
             };
 
-            info!("Uploading file {} to {}", abs_path.display(), upload_url);
             let client = match build_http_client(tls_insecure) {
                 Ok(c) => c,
                 Err(e) => return CommandResult::Error(e),
             };
 
-            match chunked_upload(&abs_path, &upload_url, &client, chunk_size, max_concurrent, &progress_tx).await {
+            // Only compress if the step has compress enabled AND file exceeds threshold
+            let should_compress = compress.unwrap_or(false);
+            let gzip_temp = if should_compress {
+                let file_size = std::fs::metadata(&abs_path).map(|m| m.len()).unwrap_or(0);
+                if file_size >= compress_threshold {
+                    match gzip_file_to_temp(&abs_path) {
+                        Ok(p) => {
+                            info!("Uploading compressed (gzip) version of {} ({} bytes)", abs_path.display(), file_size);
+                            Some(p)
+                        },
+                        Err(e) => {
+                            warn!("Failed to gzip file for upload (falling back to uncompressed): {}", e);
+                            None
+                        }
+                    }
+                } else {
+                    info!("File {} ({} bytes) below compress threshold ({}), skipping compression", abs_path.display(), file_size, compress_threshold);
+                    None
+                }
+            } else {
+                None
+            };
+
+            let upload_path = gzip_temp.as_ref().unwrap_or(&abs_path);
+            let result = match chunked_upload(upload_path, &upload_url, &client, chunk_size, max_concurrent, &progress_tx).await {
                 Ok(_) => CommandResult::Success("File uploaded successfully".to_string()),
                 Err(e) => CommandResult::Error(e),
+            };
+
+            // Clean up temp gzip file if we created one
+            if let Some(temp) = gzip_temp {
+                let _ = std::fs::remove_file(&temp);
             }
+
+            result
         }
         CommandPayload::UpdateClient { url } => {
             info!("Updating client from {}", url);

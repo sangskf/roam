@@ -215,7 +215,7 @@ async fn connect_and_run(client_id: Uuid, hostname: &str, os: &str, version: &st
                                      }
                                  });
 
-                                 let result = command_handler::handle_command(cmd, config.tls_insecure, config.chunk_size, config.max_concurrent_transfers, Some(progress_tx)).await;
+                                 let result = command_handler::handle_command(cmd, config.tls_insecure, config.chunk_size, config.max_concurrent_transfers, Some(progress_tx), config.compress_threshold).await;
 
                                  forward_task.abort();
 

@@ -21,6 +21,79 @@ pub fn start(state: Arc<AppState>) {
         }
     });
     info!("Scheduler started (check interval: {}s)", CHECK_INTERVAL_SEC);
+
+    // Start client_data cleanup task
+    start_client_data_cleanup(state);
+}
+
+fn start_client_data_cleanup(state: Arc<AppState>) {
+    let retention_days = state.config.client_data_retention_days;
+    tokio::spawn(async move {
+        // Initial delay to let the server settle
+        time::sleep(time::Duration::from_secs(30)).await;
+        loop {
+            info!("Running client_data cleanup (retention: {} days)...", retention_days);
+            if let Err(e) = cleanup_old_client_data(&state, retention_days).await {
+                error!("client_data cleanup failed: {}", e);
+            }
+            // Check once per day
+            time::sleep(time::Duration::from_secs(86400)).await;
+        }
+    });
+    info!("Client data cleanup started (retention: {} days, check interval: 24h)", retention_days);
+}
+
+async fn cleanup_old_client_data(_state: &Arc<AppState>, retention_days: u64) -> Result<(), String> {
+    let base_dir = std::path::Path::new("uploads/client_data");
+    if !base_dir.exists() {
+        return Ok(());
+    }
+
+    let mut read_dir = tokio::fs::read_dir(base_dir).await
+        .map_err(|e| format!("Failed to read client_data directory: {}", e))?;
+
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days as i64);
+    let mut cleaned = 0u64;
+    let mut failed = 0u64;
+
+    while let Some(entry) = read_dir.next_entry().await
+        .map_err(|e| format!("Failed to read directory entry: {}", e))?
+    {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        // Check directory modification time
+        let modified = match entry.metadata().await.and_then(|m| m.modified()) {
+            Ok(t) => {
+                let duration_since_epoch = t.duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|e| format!("File time error: {}", e))?;
+                let seconds = duration_since_epoch.as_secs() as i64;
+                chrono::DateTime::from_timestamp(seconds, 0)
+                    .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH)
+            },
+            Err(_) => continue, // Skip if we can't get metadata
+        };
+
+        if modified < cutoff {
+            match tokio::fs::remove_dir_all(&path).await {
+                Ok(_) => {
+                    info!("Cleaned up old client_data: {} (modified: {})", path.display(), modified);
+                    cleaned += 1;
+                },
+                Err(e) => {
+                    warn!("Failed to remove old client_data {}: {}", path.display(), e);
+                    failed += 1;
+                }
+            }
+        }
+    }
+
+    if cleaned > 0 || failed > 0 {
+        info!("client_data cleanup complete: {} removed, {} failed", cleaned, failed);
+    }
+    Ok(())
 }
 
 async fn check_and_run(state: &Arc<AppState>) -> anyhow::Result<()> {
