@@ -651,12 +651,16 @@ pub(crate) async fn run_script_task(state: Arc<AppState>, client_id: Uuid, scrip
         total_steps,
     });
 
+    info!("Script loop begin: {} steps to execute for script '{}' (history: {})", script.steps.len(), script.name, history_id);
+
     for (i, step) in script.steps.iter().enumerate() {
+        info!("Step {}/{}: Starting iteration for script '{}' (history: {})", i + 1, script.steps.len(), script.name, history_id);
+
         // Update Progress
         if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
             progress.current_step = i + 1;
         }
-        
+
         let base_url = get_download_base_url(&state, Some(client_id), Some(&server_host));
 
         let mut pending_server_save: Option<(Uuid, String)> = None;
@@ -975,6 +979,7 @@ pub(crate) async fn run_script_task(state: Arc<AppState>, client_id: Uuid, scrip
                 if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
                     progress.logs.push(log_res);
                 }
+                info!("Step {}/{}: result received, step_success={} for '{}' (history: {})", i + 1, script.steps.len(), step_success, script.name, history_id);
             }
             
             // Handle server_save_path for client-executed Download/DownloadDir steps
@@ -1010,6 +1015,7 @@ pub(crate) async fn run_script_task(state: Arc<AppState>, client_id: Uuid, scrip
             }
 
             if !step_success {
+                warn!("Step {}/{}: step_success=false, breaking out of script loop for '{}' (history: {})", i + 1, script.steps.len(), script.name, history_id);
                 let log_timeout = format!("Step {}: Timed out or failed", i + 1);
                 logs.push(log_timeout.clone());
                 if let Some(mut progress) = state.active_executions.get_mut(&history_id) {

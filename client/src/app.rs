@@ -4,6 +4,7 @@ use url::Url;
 use uuid::Uuid;
 use std::time::Duration;
 use tokio::time;
+use tokio::pin;
 use tracing::{info, error, warn};
 use std::fs;
 // use std::path::Path;
@@ -12,7 +13,7 @@ use rustls::client::danger::{ServerCertVerifier, ServerCertVerified, HandshakeSi
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::DigitallySignedStruct;
 
-use common::Message;
+use common::{Message, CommandResult};
 use crate::config::ClientConfig;
 use crate::command_handler;
 
@@ -35,7 +36,7 @@ pub async fn run(shutdown_signal: impl std::future::Future<Output = ()>) -> anyh
             }
         }
     }
-    
+
     // 2. Fallback to current directory (Development behavior) if not loaded from exe dir
     if !env_loaded {
         if let Err(e) = dotenvy::dotenv() {
@@ -44,7 +45,7 @@ pub async fn run(shutdown_signal: impl std::future::Future<Output = ()>) -> anyh
             }
         }
     }
-    
+
     // 3. Additional Development fallback (client/.env)
     if !env_loaded {
         let _ = dotenvy::from_filename("client/.env");
@@ -83,7 +84,7 @@ pub async fn run(shutdown_signal: impl std::future::Future<Output = ()>) -> anyh
             info!("Shutdown signal received, exiting...");
         }
     }
-    
+
     Ok(())
 }
 
@@ -101,7 +102,7 @@ fn get_or_create_client_id() -> anyhow::Result<Uuid> {
             return Ok(uuid);
         }
     }
-    
+
     let new_uuid = Uuid::new_v4();
     fs::write(&path, new_uuid.to_string())?;
     Ok(new_uuid)
@@ -109,21 +110,21 @@ fn get_or_create_client_id() -> anyhow::Result<Uuid> {
 
 async fn connect_and_run(client_id: Uuid, hostname: &str, os: &str, version: &str, config: &ClientConfig) -> anyhow::Result<()> {
     let url = Url::parse(&config.server_url)?;
-    
+
     let (ws_stream, _) = if config.tls_insecure {
         info!("Connecting to server (insecure mode)...");
         let tls_config = rustls::ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(NoCertificateVerification))
             .with_no_client_auth();
-            
+
         let connector = Connector::Rustls(Arc::new(tls_config));
         connect_async_tls_with_config(url.to_string(), None, false, Some(connector)).await?
     } else {
         info!("Connecting to server...");
         connect_async(url.to_string()).await?
     };
-    
+
     info!("Connected to server at {}", config.server_url);
 
     let (mut write, mut read) = ws_stream.split();
@@ -215,9 +216,40 @@ async fn connect_and_run(client_id: Uuid, hostname: &str, os: &str, version: &st
                                      }
                                  });
 
-                                 let result = command_handler::handle_command(cmd, config.tls_insecure, config.chunk_size, config.max_concurrent_transfers, Some(progress_tx), config.compress_threshold).await;
+                                 // Run command in background so the main loop can continue
+                                 // sending heartbeats during long file transfers.
+                                 let tls_insecure = config.tls_insecure;
+                                 let chunk_size = config.chunk_size;
+                                 let max_concurrent = config.max_concurrent_transfers;
+                                 let compress_threshold = config.compress_threshold;
+                                 let cmd_handle = tokio::spawn(async move {
+                                     command_handler::handle_command(cmd, tls_insecure, chunk_size, max_concurrent, Some(progress_tx), compress_threshold).await
+                                 });
+                                 pin!(cmd_handle);
 
-                                 forward_task.abort();
+                                 let mut rx_open = true;
+                                 let result = loop {
+                                     tokio::select! {
+                                         result = &mut cmd_handle => {
+                                             forward_task.abort();
+                                             match result {
+                                                 Ok(r) => break r,
+                                                 Err(_) => break CommandResult::Error("Command task panicked".to_string()),
+                                             }
+                                         }
+                                         msg = rx.recv(), if rx_open => {
+                                             match msg {
+                                                 Some(msg) => {
+                                                     let json = serde_json::to_string(&msg)?;
+                                                     write.send(WsMessage::Text(json)).await?;
+                                                 }
+                                                 None => {
+                                                     rx_open = false;
+                                                 }
+                                             }
+                                         }
+                                     }
+                                 };
 
                                  info!("Command execution finished. Result: {:?}", result);
                                  let response = Message::Response { id, result };
@@ -234,7 +266,7 @@ async fn connect_and_run(client_id: Uuid, hostname: &str, os: &str, version: &st
             else => break,
         }
     }
-    
+
     heartbeat_task.abort();
     Ok(())
 }
@@ -291,7 +323,7 @@ fn get_now() -> chrono::DateTime<chrono::Utc> {
     unsafe {
         START.call_once(|| {
             use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
-            
+
             // Check if GetSystemTimePreciseAsFileTime exists in kernel32.dll
             let kernel32 = GetModuleHandleA(b"kernel32.dll\0".as_ptr());
             if kernel32 != 0 {
@@ -308,17 +340,17 @@ fn get_now() -> chrono::DateTime<chrono::Utc> {
             // Fallback for Windows 7 and older: use GetSystemTimeAsFileTime
             use windows_sys::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
             use windows_sys::Win32::Foundation::FILETIME;
-            
+
             let mut ft: FILETIME = std::mem::zeroed();
             GetSystemTimeAsFileTime(&mut ft);
-            
+
             // FILETIME is 100ns intervals since Jan 1, 1601 UTC
             let ticks = ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64);
-            
+
             // Unix epoch (1970-01-01) is 11644473600 seconds after 1601-01-01
             // 11644473600 * 10,000,000 = 116444736000000000 ticks
             const UNIX_EPOCH_TICKS: u64 = 116444736000000000;
-            
+
             let (seconds, nanos) = if ticks >= UNIX_EPOCH_TICKS {
                 let diff = ticks - UNIX_EPOCH_TICKS;
                 ((diff / 10_000_000) as i64, ((diff % 10_000_000) * 100) as u32)
@@ -326,7 +358,7 @@ fn get_now() -> chrono::DateTime<chrono::Utc> {
                 // Before 1970, fallback to epoch
                 (0, 0)
             };
-            
+
             chrono::DateTime::from_timestamp(seconds, nanos).unwrap_or_default()
         }
     }
