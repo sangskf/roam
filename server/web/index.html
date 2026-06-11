@@ -708,7 +708,7 @@
                                 'bg-green-100 text-green-700': item.status === 'completed',
                                 'bg-red-100 text-red-700': item.status === 'failed',
                                 'bg-blue-100 text-blue-700': item.status === 'running'
-                            }">{{ item.status }}</span>
+                            }">{{ t(item.status) }}</span>
                         </td>
                         <td class="p-3">
                             <button @click="viewLogs(item)" class="text-blue-600 hover:underline text-xs mr-2">{{ t('viewLogs') }}</button>
@@ -1419,7 +1419,7 @@
                                         'bg-green-100 text-green-700': exec.status === 'completed',
                                         'bg-red-100 text-red-700': exec.status === 'failed',
                                         'bg-blue-100 text-blue-700': exec.status === 'running'
-                                    }">{{ exec.status }}</span>
+                                    }">{{ t(exec.status) }}</span>
                                 </td>
                                 <td class="p-3">
                                     <div class="flex items-center gap-2">
@@ -2578,6 +2578,9 @@
                         scheduledTaskHistory: '定时任务执行历史',
                         backToTasks: '返回任务列表',
                         noGroups: '暂无可用分组。',
+                        completed: '执行成功',
+                        failed: '执行失败',
+                        running: '正在执行',
                     }
                 }
 
