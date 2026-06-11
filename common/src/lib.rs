@@ -38,6 +38,12 @@ pub enum Message {
         id: Uuid, // Correlates to Command ID
         result: CommandResult,
     },
+
+    // Progress updates (Client -> Server during long operations like file transfers)
+    Progress {
+        id: Uuid, // Correlates to Command ID
+        message: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

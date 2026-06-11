@@ -14,6 +14,7 @@ pub struct AppState {
     pub waiters: DashMap<Uuid, oneshot::Sender<CommandResult>>,
     pub active_executions: DashMap<Uuid, ExecutionProgress>,
     pub web_sessions: DashMap<String, String>, // token -> username
+    pub cmd_history_map: DashMap<Uuid, Uuid>, // command_id -> history_id (for progress correlation)
     pub config: ServerConfig,
 }
 
@@ -114,6 +115,7 @@ impl AppState {
             waiters: DashMap::new(),
             active_executions: DashMap::new(),
             web_sessions: DashMap::new(),
+            cmd_history_map: DashMap::new(),
             config,
         }
     }

@@ -201,7 +201,24 @@ async fn connect_and_run(client_id: Uuid, hostname: &str, os: &str, version: &st
                          match parsed {
                              Message::Command { id, cmd } => {
                                  info!("Received command: {:?}", cmd);
-                                 let result = command_handler::handle_command(cmd, config.tls_insecure, config.chunk_size, config.max_concurrent_transfers).await;
+
+                                 // Create progress channel for streaming file transfer progress to server
+                                 let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<String>(256);
+                                 let tx_clone = tx.clone();
+                                 let cmd_id = id;
+                                 let forward_task = tokio::spawn(async move {
+                                     while let Some(msg) = progress_rx.recv().await {
+                                         let progress_msg = Message::Progress { id: cmd_id, message: msg };
+                                         if tx_clone.send(progress_msg).await.is_err() {
+                                             break;
+                                         }
+                                     }
+                                 });
+
+                                 let result = command_handler::handle_command(cmd, config.tls_insecure, config.chunk_size, config.max_concurrent_transfers, Some(progress_tx)).await;
+
+                                 forward_task.abort();
+
                                  info!("Command execution finished. Result: {:?}", result);
                                  let response = Message::Response { id, result };
                                  let json = serde_json::to_string(&response)?;

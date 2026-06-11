@@ -867,11 +867,16 @@ pub(crate) async fn run_script_task(state: Arc<AppState>, client_id: Uuid, scrip
             let cmd_id = Uuid::new_v4();
             let (wait_tx, wait_rx) = tokio::sync::oneshot::channel();
             state.waiters.insert(cmd_id, wait_tx);
+            state.cmd_history_map.insert(cmd_id, history_id);
+
+            let is_file_transfer = matches!(cmd_payload, CommandPayload::UploadFile { .. } | CommandPayload::DownloadFile { .. });
+            let step_timeout = if is_file_transfer { 600 } else { 300 };
+
             let msg = Message::Command {
                 id: cmd_id,
                 cmd: cmd_payload,
             };
-            
+
             if let Err(e) = client.tx.send(msg).await {
                 state.waiters.remove(&cmd_id);
                 let log_err = format!("Step {}: Failed to send command: {}", i + 1, e);
@@ -882,10 +887,20 @@ pub(crate) async fn run_script_task(state: Arc<AppState>, client_id: Uuid, scrip
                 success = false;
                 break;
             }
-            
+
             // Wait for result
             let mut step_success = false;
-            let result = match tokio::time::timeout(tokio::time::Duration::from_secs(300), wait_rx).await {
+
+            // Log start of file transfers
+            if is_file_transfer {
+                let log_start = format!("Step {}: File transfer starting (timeout: {}s)", i + 1, step_timeout);
+                logs.push(log_start.clone());
+                if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
+                    progress.logs.push(log_start);
+                }
+            }
+
+            let result = match tokio::time::timeout(tokio::time::Duration::from_secs(step_timeout), wait_rx).await {
                 Ok(Ok(r)) => Some(r),
                 Ok(Err(_)) => None,
                 Err(_) => {
@@ -919,6 +934,38 @@ pub(crate) async fn run_script_task(state: Arc<AppState>, client_id: Uuid, scrip
                 }
             }
             
+            // Handle server_save_path for client-executed Download/DownloadDir steps
+            if step_success {
+                if let Some((upload_id, save_path)) = pending_server_save.take() {
+                    let client_data_dir = format!("uploads/client_data/{}", upload_id);
+                    if let Ok(mut entries) = tokio::fs::read_dir(&client_data_dir).await {
+                        if let Ok(Some(entry)) = entries.next_entry().await {
+                            let src = entry.path();
+                            let dst = std::path::Path::new(&save_path);
+                            if let Some(parent) = dst.parent() {
+                                let _ = tokio::fs::create_dir_all(parent).await;
+                            }
+                            match tokio::fs::copy(&src, dst).await {
+                                Ok(_) => {
+                                    let log_save = format!("Step {}: File saved to server path: {}", i + 1, save_path);
+                                    logs.push(log_save.clone());
+                                    if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
+                                        progress.logs.push(log_save);
+                                    }
+                                }
+                                Err(e) => {
+                                    let log_save = format!("Step {}: Failed to save to server path {}: {}", i + 1, save_path, e);
+                                    logs.push(log_save.clone());
+                                    if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
+                                        progress.logs.push(log_save);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if !step_success {
                 let log_timeout = format!("Step {}: Timed out or failed", i + 1);
                 logs.push(log_timeout.clone());
@@ -928,7 +975,7 @@ pub(crate) async fn run_script_task(state: Arc<AppState>, client_id: Uuid, scrip
                 success = false;
                 break;
             }
-            
+
         } else {
             let log_disc = "Client disconnected".to_string();
             logs.push(log_disc.clone());
@@ -1974,6 +2021,15 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, addr: SocketAddr
                                 state.results.insert(id, result.clone());
                                 if let Some((_, waiter)) = state.waiters.remove(&id) {
                                     let _ = waiter.send(result);
+                                }
+                                state.cmd_history_map.remove(&id);
+                            }
+                            Message::Progress { id, message } => {
+                                if let Some(entry) = state.cmd_history_map.get(&id) {
+                                    let history_id = *entry;
+                                    if let Some(mut progress) = state.active_executions.get_mut(&history_id) {
+                                        progress.logs.push(message);
+                                    }
                                 }
                             }
                             _ => {}

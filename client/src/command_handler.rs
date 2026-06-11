@@ -112,7 +112,11 @@ fn build_http_client(tls_insecure: bool) -> Result<reqwest::Client, String> {
         .map_err(|e| format!("Failed to build http client: {}", e))
 }
 
-async fn single_download(url: &str, dest_path: &Path, client: &reqwest::Client) -> Result<(), String> {
+async fn single_download(url: &str, dest_path: &Path, client: &reqwest::Client, progress_tx: &Option<tokio::sync::mpsc::Sender<String>>) -> Result<(), String> {
+    if let Some(ref tx) = progress_tx {
+        let _ = tx.try_send(format!("Downloading: {} → {}", url, dest_path.display())).ok();
+    }
+    info!("Downloading {} to {} via single download", url, dest_path.display());
     let resp = client.get(url).send().await.map_err(|e| format!("Download failed: {}", e))?;
     if !resp.status().is_success() {
         return Err(format!("Download failed with status: {}", resp.status()));
@@ -120,7 +124,13 @@ async fn single_download(url: &str, dest_path: &Path, client: &reqwest::Client) 
     let bytes = resp.bytes().await.map_err(|e| format!("Failed to read response: {}", e))?;
 
     match tokio::fs::write(dest_path, &bytes).await {
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            if let Some(ref tx) = progress_tx {
+                let _ = tx.try_send(format!("Download complete: {} bytes to {}", bytes.len(), dest_path.display())).ok();
+            }
+            info!("Single download completed: {} bytes written to {}", bytes.len(), dest_path.display());
+            Ok(())
+        },
         Err(e) => {
             if let Some(parent) = dest_path.parent() {
                 let _ = tokio::fs::create_dir_all(parent).await;
@@ -132,7 +142,7 @@ async fn single_download(url: &str, dest_path: &Path, client: &reqwest::Client) 
     }
 }
 
-async fn chunked_download(url: &str, dest_path: &Path, client: &reqwest::Client, chunk_size: usize, max_concurrent: usize) -> Result<(), String> {
+async fn chunked_download(url: &str, dest_path: &Path, client: &reqwest::Client, chunk_size: usize, max_concurrent: usize, progress_tx: &Option<tokio::sync::mpsc::Sender<String>>) -> Result<(), String> {
     // HEAD request to get file size and check range support
     let head_resp = client.head(url).send().await.map_err(|e| format!("HEAD request failed: {}", e))?;
 
@@ -150,10 +160,15 @@ async fn chunked_download(url: &str, dest_path: &Path, client: &reqwest::Client,
         .unwrap_or("");
 
     if file_size <= chunk_size || !accept_ranges.contains("bytes") {
-        return single_download(url, dest_path, client).await;
+        return single_download(url, dest_path, client, progress_tx).await;
     }
 
     let total_chunks = file_size.div_ceil(chunk_size);
+
+    if let Some(ref tx) = progress_tx {
+        let _ = tx.try_send(format!("Downloading: {} ({} bytes, {} chunks)", url, file_size, total_chunks)).ok();
+    }
+    info!("Chunked download of {} ({} bytes, {} chunks) to {}", url, file_size, total_chunks, dest_path.display());
 
     if let Some(parent) = dest_path.parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
@@ -173,6 +188,7 @@ async fn chunked_download(url: &str, dest_path: &Path, client: &reqwest::Client,
         let url_str = url.to_string();
         let chunk_path = temp_dir.join(format!("roam_dl_{}_{}", session_id, i));
         let sem = semaphore.clone();
+        let tx = progress_tx.clone();
 
         handles.push(tokio::spawn(async move {
             let _permit = sem.acquire().await.map_err(|e| format!("Semaphore error: {}", e))?;
@@ -188,6 +204,10 @@ async fn chunked_download(url: &str, dest_path: &Path, client: &reqwest::Client,
 
             let bytes = resp.bytes().await.map_err(|e| format!("Chunk {} read failed: {}", i, e))?;
             tokio::fs::write(&chunk_path, &bytes).await.map_err(|e| format!("Chunk {} write failed: {}", i, e))?;
+            if let Some(ref tx) = tx {
+                let _ = tx.try_send(format!("Downloaded chunk {}/{} (bytes {}-{})", i + 1, total_chunks, start, end)).ok();
+            }
+            info!("Chunk {}/{} downloaded (bytes {}-{})", i + 1, total_chunks, start, end);
             Ok::<(usize, PathBuf), String>((i, chunk_path))
         }));
     }
@@ -212,39 +232,59 @@ async fn chunked_download(url: &str, dest_path: &Path, client: &reqwest::Client,
     }
 
     out_file.flush().await.map_err(|e| format!("Failed to flush output: {}", e))?;
+    if let Some(ref tx) = progress_tx {
+        let _ = tx.try_send(format!("Download complete: {} chunks assembled, {} bytes to {}", total_chunks, file_size, dest_path.display())).ok();
+    }
+    info!("Chunked download completed: {} chunks assembled to {}, {} bytes", total_chunks, dest_path.display(), file_size);
     Ok(())
 }
 
-async fn single_upload(file_path: &Path, upload_url: &str, client: &reqwest::Client) -> Result<(), String> {
-    let data = tokio::fs::read(file_path).await.map_err(|e| format!("Failed to read file: {}", e))?;
+async fn single_upload(file_path: &Path, upload_url: &str, client: &reqwest::Client, progress_tx: &Option<tokio::sync::mpsc::Sender<String>>) -> Result<(), String> {
+    let metadata = tokio::fs::metadata(file_path).await.map_err(|e| format!("Failed to get file metadata: {}", e))?;
+    let file_size = metadata.len();
     let file_name = file_path.file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "unknown".to_string());
 
+    if let Some(ref tx) = progress_tx {
+        let _ = tx.try_send(format!("Uploading: {} ({} bytes) to {}", file_name, file_size, upload_url)).ok();
+    }
+    info!("Uploading {} ({} bytes) to {} via single upload", file_name, file_size, upload_url);
+    let data = tokio::fs::read(file_path).await.map_err(|e| format!("Failed to read file: {}", e))?;
+
     let form = reqwest::multipart::Form::new()
-        .part("file", reqwest::multipart::Part::bytes(data).file_name(file_name));
+        .part("file", reqwest::multipart::Part::bytes(data).file_name(file_name.clone()));
 
     let resp = client.post(upload_url).multipart(form).send().await.map_err(|e| format!("Failed to send file: {}", e))?;
 
     if resp.status().is_success() {
+        if let Some(ref tx) = progress_tx {
+            let _ = tx.try_send(format!("Upload complete: {} ({} bytes)", file_name, file_size)).ok();
+        }
+        info!("Single upload of {} completed successfully ({} bytes)", file_name, file_size);
         Ok(())
     } else {
         Err(format!("Upload failed with status: {}", resp.status()))
     }
 }
 
-async fn chunked_upload(file_path: &Path, upload_url: &str, client: &reqwest::Client, chunk_size: usize, max_concurrent: usize) -> Result<(), String> {
+async fn chunked_upload(file_path: &Path, upload_url: &str, client: &reqwest::Client, chunk_size: usize, max_concurrent: usize, progress_tx: &Option<tokio::sync::mpsc::Sender<String>>) -> Result<(), String> {
     let metadata = tokio::fs::metadata(file_path).await.map_err(|e| format!("Failed to get file metadata: {}", e))?;
     let file_size = metadata.len() as usize;
 
     if file_size <= chunk_size {
-        return single_upload(file_path, upload_url, client).await;
+        return single_upload(file_path, upload_url, client, progress_tx).await;
     }
 
     let total_chunks = file_size.div_ceil(chunk_size);
     let filename = file_path.file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "unknown".to_string());
+
+    if let Some(ref tx) = progress_tx {
+        let _ = tx.try_send(format!("Uploading: {} ({} bytes, {} chunks) to {}", filename, file_size, total_chunks, upload_url)).ok();
+    }
+    info!("Chunked upload of {} ({} bytes, {} chunks, chunk size {}) to {}", filename, file_size, total_chunks, chunk_size, upload_url);
 
     let chunked_base = upload_url.replace("/client-upload/", "/chunked-upload/");
 
@@ -259,6 +299,7 @@ async fn chunked_upload(file_path: &Path, upload_url: &str, client: &reqwest::Cl
         let client = client.clone();
         let fp = file_path.to_path_buf();
         let sem = semaphore.clone();
+        let tx = progress_tx.clone();
 
         handles.push(tokio::spawn(async move {
             let _permit = sem.acquire().await.map_err(|e| format!("Semaphore error: {}", e))?;
@@ -281,6 +322,10 @@ async fn chunked_upload(file_path: &Path, upload_url: &str, client: &reqwest::Cl
                 return Err::<usize, String>(format!("Chunk {} upload failed with status: {}", i, resp.status()));
             }
 
+            if let Some(ref tx) = tx {
+                let _ = tx.try_send(format!("Uploaded chunk {}/{} (bytes {}-{})", i + 1, total_chunks, start, end)).ok();
+            }
+            info!("Chunk {}/{} uploaded ({}-{} bytes)", i + 1, total_chunks, start, end);
             Ok::<usize, String>(i)
         }));
     }
@@ -309,10 +354,14 @@ async fn chunked_upload(file_path: &Path, upload_url: &str, client: &reqwest::Cl
         return Err(format!("Complete chunked upload failed with status: {}", resp.status()));
     }
 
+    if let Some(ref tx) = progress_tx {
+        let _ = tx.try_send(format!("Upload complete: {} ({} chunks, {} bytes)", filename, total_chunks, file_size)).ok();
+    }
+    info!("Chunked upload of {} completed: {} chunks, {} bytes total", filename, total_chunks, file_size);
     Ok(())
 }
 
-pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool, chunk_size: usize, max_concurrent: usize) -> CommandResult {
+pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool, chunk_size: usize, max_concurrent: usize, progress_tx: Option<tokio::sync::mpsc::Sender<String>>) -> CommandResult {
     match cmd {
         CommandPayload::ShellExec { cmd, args } => {
             info!("Executing shell command: {} {:?}", cmd, args);
@@ -485,7 +534,7 @@ pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool, chunk_size:
             };
             let dest = expand_path(&dest_path);
 
-            match chunked_download(&url, &dest, &client, chunk_size, max_concurrent).await {
+            match chunked_download(&url, &dest, &client, chunk_size, max_concurrent, &progress_tx).await {
                 Ok(_) => CommandResult::Success(format!("File downloaded to {}", dest_path)),
                 Err(e) => CommandResult::Error(e),
             }
@@ -504,7 +553,7 @@ pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool, chunk_size:
                 Err(e) => return CommandResult::Error(e),
             };
 
-            match chunked_upload(&abs_path, &upload_url, &client, chunk_size, max_concurrent).await {
+            match chunked_upload(&abs_path, &upload_url, &client, chunk_size, max_concurrent, &progress_tx).await {
                 Ok(_) => CommandResult::Success("File uploaded successfully".to_string()),
                 Err(e) => CommandResult::Error(e),
             }
@@ -514,7 +563,7 @@ pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool, chunk_size:
             let tls = tls_insecure;
             let chunk = chunk_size;
             let max_conc = max_concurrent;
-            match download_and_replace(&url, tls, chunk, max_conc).await {
+            match download_and_replace(&url, tls, chunk, max_conc, &progress_tx).await {
                 Ok(_) => {
                     info!("Client updated, restarting...");
                     std::process::exit(0);
@@ -570,7 +619,7 @@ pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool, chunk_size:
             let temp_dir = std::env::temp_dir();
             let temp_zip = temp_dir.join(format!("roam_download_{}.zip", uuid::Uuid::new_v4()));
 
-            if let Err(e) = chunked_download(&url, &temp_zip, &client, chunk_size, max_concurrent).await {
+            if let Err(e) = chunked_download(&url, &temp_zip, &client, chunk_size, max_concurrent, &progress_tx).await {
                 return CommandResult::Error(format!("Download failed: {}", e));
             }
 
@@ -612,7 +661,7 @@ pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool, chunk_size:
                         Err(e) => return CommandResult::Error(e),
                     };
 
-                    let result = match chunked_upload(&temp_zip, &upload_url, &client, chunk_size, max_concurrent).await {
+                    let result = match chunked_upload(&temp_zip, &upload_url, &client, chunk_size, max_concurrent, &progress_tx).await {
                         Ok(_) => CommandResult::Success("Directory zipped and uploaded successfully".to_string()),
                         Err(e) => CommandResult::Error(format!("Upload failed: {}", e)),
                     };
@@ -743,13 +792,13 @@ pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool, chunk_size:
     }
 }
 
-async fn download_and_replace(url: &str, tls_insecure: bool, chunk_size: usize, max_concurrent: usize) -> anyhow::Result<()> {
+async fn download_and_replace(url: &str, tls_insecure: bool, chunk_size: usize, max_concurrent: usize, progress_tx: &Option<tokio::sync::mpsc::Sender<String>>) -> anyhow::Result<()> {
     let client = build_http_client(tls_insecure).map_err(|e| anyhow::anyhow!(e))?;
 
     let mut temp_file = std::env::temp_dir();
     temp_file.push("roam_client_update");
 
-    chunked_download(url, &temp_file, &client, chunk_size, max_concurrent).await
+    chunked_download(url, &temp_file, &client, chunk_size, max_concurrent, progress_tx).await
         .map_err(|e| anyhow::anyhow!("Download failed: {}", e))?;
 
     // Make executable on unix
