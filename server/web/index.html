@@ -1371,7 +1371,7 @@
 
         <!-- Log Viewer Modal -->
         <div v-if="activeModal === 'logs'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-lg shadow-xl flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full max-w-2xl max-h-[80vh]'">
+            <div class="bg-white rounded-lg shadow-xl flex flex-col transition-all duration-300" :class="isMaximized ? 'w-full h-full rounded-none' : 'w-full max-w-4xl max-h-[90vh]'">
                 <div class="flex justify-between items-center p-4 border-b bg-gray-50 rounded-t-lg">
                     <h3 class="font-bold flex items-center gap-2">
                         {{ t('executionLogs') }}
@@ -1389,8 +1389,8 @@
                         </button>
                     </div>
                 </div>
-                <div class="p-4 overflow-auto bg-gray-900 text-green-400 font-mono text-xs flex-1">
-                    <div v-for="(log, i) in selectedLogs" :key="i" class="mb-1 whitespace-pre-wrap">
+                <div class="p-4 overflow-auto bg-gray-900 text-green-400 font-mono text-sm flex-1">
+                    <div v-for="(log, i) in selectedLogs" :key="i" class="mb-1 whitespace-pre-wrap leading-relaxed">
                         {{ log }}
                         <button v-if="log.includes('http://') || log.includes('https://')" @click="downloadArtifact(log)" class="ml-2 text-blue-300 hover:text-white underline text-xs">
                             [{{ t('openLink') }}]
@@ -1402,10 +1402,18 @@
 
         <!-- Execution Monitor Modal -->
         <div v-if="activeModal === 'executionMonitor'" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl m-4 md:m-0 flex flex-col max-h-[90vh] relative">
-                <div class="p-4 border-b flex justify-between items-center">
+            <div class="flex flex-col transition-all duration-300 relative" :class="isMaximized ? 'w-full h-full rounded-none m-0 bg-white' : 'bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] m-4 md:m-0'">
+                <div class="p-4 border-b flex justify-between items-center bg-white rounded-t-lg">
                     <h3 class="font-bold text-lg">{{ t('executionMonitor') }}</h3>
-                    <button @click="closeModal" class="text-gray-500 hover:text-gray-700">✕</button>
+                    <div class="flex items-center bg-white border rounded shadow-sm">
+                         <button @click="toggleMaximize" class="px-3 py-1 hover:bg-gray-100 text-gray-600 border-r" :title="isMaximized ? t('restore') : t('maximize')">
+                            <span v-if="isMaximized">❐</span>
+                            <span v-else>☐</span>
+                        </button>
+                        <button @click="closeModal" class="px-3 py-1 hover:bg-red-500 hover:text-white text-gray-600" :title="t('close')">
+                            ✕
+                        </button>
+                    </div>
                 </div>
                 <div class="p-4 overflow-auto flex-1 bg-gray-50">
                     <table class="w-full text-left text-sm border-collapse bg-white shadow-sm rounded">
@@ -1452,16 +1460,22 @@
                 </div>
                 
                 <!-- Live Logs Overlay -->
-                <div v-if="viewingExecutionId" class="absolute inset-0 bg-white bg-opacity-95 flex flex-col z-10 p-4">
-                     <div class="flex justify-between items-center mb-4 border-b pb-2">
-                        <h4 class="font-bold">{{ t('liveLogs') }}: {{ viewingExecution?.client_hostname }} - {{ viewingExecution?.script_name }}</h4>
-                        <button @click="viewingExecutionId = null" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded text-sm">{{ t('back') }}</button>
+                <div v-if="viewingExecutionId" class="absolute inset-0 bg-white flex flex-col z-10 p-4" :class="isMaximized ? 'p-6' : 'bg-opacity-95'">
+                     <div class="flex justify-between items-center mb-2 border-b pb-2">
+                        <h4 class="font-bold text-base">{{ t('liveLogs') }}: {{ viewingExecution?.client_hostname }} - {{ viewingExecution?.script_name }}</h4>
+                        <div class="flex items-center gap-2">
+                            <button @click="toggleMaximize" class="px-2 py-1 text-sm border rounded hover:bg-gray-100" :title="isMaximized ? t('restore') : t('maximize')">
+                                <span v-if="isMaximized">❐</span>
+                                <span v-else>☐</span>
+                            </button>
+                            <button @click="viewingExecutionId = null" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded text-sm">{{ t('back') }}</button>
+                        </div>
                     </div>
-                    <div class="flex-1 overflow-auto bg-gray-900 text-green-400 font-mono text-xs p-4 rounded">
+                    <div class="flex-1 overflow-auto bg-gray-900 text-green-400 font-mono text-sm p-4 rounded">
                          <div v-if="viewingExecution">
-                            <div v-for="(log, i) in viewingExecution.logs" :key="i" class="mb-1 whitespace-pre-wrap">{{ log }}</div>
+                            <div v-for="(log, i) in viewingExecution.logs" :key="i" class="mb-1 whitespace-pre-wrap leading-relaxed">{{ log }}</div>
                          </div>
-                         <div v-else class="text-gray-500">Execution finished or not found.</div>
+                         <div v-else class="text-gray-500">{{ t('executionFinished') }}</div>
                     </div>
                 </div>
             </div>
@@ -2180,6 +2194,7 @@
                         viewLogs: 'View Logs',
                         downloadLogs: 'Download Logs',
                         liveLogs: 'Live Logs',
+                        executionFinished: 'Execution finished or not found.',
                         back: 'Back',
                         updateManager: 'Update Manager',
                         uploadUpdate: 'Upload Update',
@@ -2457,6 +2472,7 @@
                         viewLogs: '查看日志',
                         downloadLogs: '下载日志',
                         liveLogs: '实时日志',
+                        executionFinished: '执行已完成或未找到。',
                         back: '返回',
                         updateManager: '更新管理',
                         uploadUpdate: '上传更新包',
@@ -4634,6 +4650,8 @@
                 const closeModal = () => {
                     activeModal.value = null
                     selectedClient.value = null
+                    viewingExecutionId.value = null
+                    isMaximized.value = false
                 }
 
                 const formatBytes = (bytes, decimals = 2) => {
