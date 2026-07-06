@@ -27,63 +27,67 @@ pub fn start(state: Arc<AppState>) {
 }
 
 fn start_client_data_cleanup(state: Arc<AppState>) {
-    let retention_days = state.config.client_data_retention_days;
+    let interval_min = state.config.client_data_cleanup_interval_min.max(1);
+    let interval_secs = interval_min * 60;
     tokio::spawn(async move {
         // Initial delay to let the server settle
         time::sleep(time::Duration::from_secs(30)).await;
         loop {
-            info!("Running client_data cleanup (retention: {} days)...", retention_days);
-            if let Err(e) = cleanup_old_client_data(&state, retention_days).await {
-                error!("client_data cleanup failed: {}", e);
-            }
-            // Check once per day
-            time::sleep(time::Duration::from_secs(86400)).await;
+            info!("Running client_data cleanup (interval: {} min)...", interval_min);
+            cleanup_old_client_data(&state, interval_min).await;
+            time::sleep(time::Duration::from_secs(interval_secs)).await;
         }
     });
-    info!("Client data cleanup started (retention: {} days, check interval: 24h)", retention_days);
+    info!("Client data cleanup started (interval: {} min)", interval_min);
 }
 
-async fn cleanup_old_client_data(_state: &Arc<AppState>, retention_days: u64) -> Result<(), String> {
+async fn cleanup_old_client_data(_state: &Arc<AppState>, interval_min: u64) {
     let base_dir = std::path::Path::new("uploads/client_data");
     if !base_dir.exists() {
-        return Ok(());
+        return;
     }
 
-    let mut read_dir = tokio::fs::read_dir(base_dir).await
-        .map_err(|e| format!("Failed to read client_data directory: {}", e))?;
-
-    let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days as i64);
+    let cutoff = chrono::Utc::now() - chrono::Duration::minutes(interval_min as i64 * 2);
     let mut cleaned = 0u64;
     let mut failed = 0u64;
+    let mut read_dir = match tokio::fs::read_dir(base_dir).await {
+        Ok(d) => d,
+        Err(e) => {
+            error!("Failed to read client_data directory: {}", e);
+            return;
+        }
+    };
 
-    while let Some(entry) = read_dir.next_entry().await
-        .map_err(|e| format!("Failed to read directory entry: {}", e))?
-    {
+    loop {
+        let entry = match read_dir.next_entry().await {
+            Ok(Some(e)) => e,
+            Ok(None) => break,
+            Err(e) => {
+                warn!("Error reading client_data entry, skipping: {}", e);
+                continue;
+            }
+        };
+
         let path = entry.path();
         if !path.is_dir() {
             continue;
         }
 
-        // Check directory modification time
-        let modified = match entry.metadata().await.and_then(|m| m.modified()) {
-            Ok(t) => {
-                let duration_since_epoch = t.duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|e| format!("File time error: {}", e))?;
-                let seconds = duration_since_epoch.as_secs() as i64;
-                chrono::DateTime::from_timestamp(seconds, 0)
-                    .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH)
-            },
-            Err(_) => continue, // Skip if we can't get metadata
+        // Check the newest file mtime in the directory (more reliable than dir mtime)
+        let newest = match newest_file_mtime(&path).await {
+            Some(t) => t,
+            None => continue, // empty directory, skip
         };
 
-        if modified < cutoff {
+        if newest < cutoff {
             match tokio::fs::remove_dir_all(&path).await {
                 Ok(_) => {
-                    info!("Cleaned up old client_data: {} (modified: {})", path.display(), modified);
+                    info!("Cleaned up client_data: {} (newest file: {})", path.display(), newest);
                     cleaned += 1;
                 },
                 Err(e) => {
-                    warn!("Failed to remove old client_data {}: {}", path.display(), e);
+                    // Directory or file in use — skip and continue
+                    warn!("Failed to remove client_data {} (may be in use, will retry next cycle): {}", path.display(), e);
                     failed += 1;
                 }
             }
@@ -91,9 +95,46 @@ async fn cleanup_old_client_data(_state: &Arc<AppState>, retention_days: u64) ->
     }
 
     if cleaned > 0 || failed > 0 {
-        info!("client_data cleanup complete: {} removed, {} failed", cleaned, failed);
+        info!("client_data cleanup: {} removed, {} skipped", cleaned, failed);
     }
-    Ok(())
+}
+
+/// Find the newest modification time among all files in a directory tree.
+async fn newest_file_mtime(dir: &std::path::Path) -> Option<chrono::DateTime<chrono::Utc>> {
+    let mut newest: Option<chrono::DateTime<chrono::Utc>> = None;
+    let mut stack = vec![dir.to_path_buf()];
+
+    while let Some(current) = stack.pop() {
+        let mut read_dir = match tokio::fs::read_dir(&current).await {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+
+        loop {
+            let entry = match read_dir.next_entry().await {
+                Ok(Some(e)) => e,
+                Ok(None) => break,
+                Err(_) => continue,
+            };
+
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if let Ok(meta) = entry.metadata().await {
+                if let Ok(mtime) = meta.modified() {
+                    if let Ok(dur) = mtime.duration_since(std::time::UNIX_EPOCH) {
+                        let dt = chrono::DateTime::from_timestamp(dur.as_secs() as i64, 0)
+                            .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+                        if newest.map_or(true, |n| dt > n) {
+                            newest = Some(dt);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    newest
 }
 
 async fn check_and_run(state: &Arc<AppState>) -> anyhow::Result<()> {
