@@ -101,11 +101,15 @@ pub enum ScriptStep {
     Compress {
         src_path: String,
         dest_path: String,
+        #[serde(default)] src_path_is_absolute: Option<bool>,
+        #[serde(default)] dest_path_is_absolute: Option<bool>,
         #[serde(default)] run_on_server: Option<bool>,
     },
     Decompress {
         src_path: String,
         dest_path: String,
+        #[serde(default)] src_path_is_absolute: Option<bool>,
+        #[serde(default)] dest_path_is_absolute: Option<bool>,
         #[serde(default)] run_on_server: Option<bool>,
     },
     HttpRequest {
