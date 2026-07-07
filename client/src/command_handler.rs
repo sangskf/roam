@@ -11,6 +11,7 @@ use tracing::{info, error, warn};
 use walkdir::WalkDir;
 use zip::write::FileOptions;
 use flate2::read::GzEncoder;
+use flate2::read::GzDecoder as GzDecoderRead;
 use flate2::write::GzDecoder;
 use flate2::Compression;
 
@@ -833,6 +834,83 @@ pub async fn handle_command(cmd: CommandPayload, tls_insecure: bool, chunk_size:
                     Ok(_) => CommandResult::Success(format!("File deleted: {}", path)),
                     Err(e) => CommandResult::Error(format!("Failed to delete file: {}", e)),
                 }
+            }
+        }
+        CommandPayload::Compress { src_path, dest_path } => {
+            info!("Compressing {} -> {}", src_path, dest_path);
+            let src = expand_path(&src_path);
+            let dest = expand_path(&dest_path);
+
+            if dest_path.ends_with(".zip") {
+                let result = if src.is_dir() {
+                    tokio::task::spawn_blocking(move || zip_directory(&src, &dest)).await
+                } else if src.is_file() {
+                    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                        let file = std::fs::File::create(&dest)?;
+                        let mut zip = zip::ZipWriter::new(file);
+                        let options = zip::write::FileOptions::default()
+                            .compression_method(zip::CompressionMethod::Deflated);
+                        let file_name = src.file_name().unwrap_or_default().to_string_lossy();
+                        zip.start_file(file_name.as_ref(), options)?;
+                        let mut src_file = std::fs::File::open(&src)?;
+                        std::io::copy(&mut src_file, &mut zip)?;
+                        zip.finish()?;
+                        Ok(())
+                    }).await
+                } else {
+                    return CommandResult::Error(format!("Source not found: {}", src_path));
+                };
+                match result {
+                    Ok(Ok(_)) => CommandResult::Success(format!("Compressed to {}", dest_path)),
+                    Ok(Err(e)) => CommandResult::Error(format!("Compression failed: {}", e)),
+                    Err(e) => CommandResult::Error(format!("Compression task failed: {}", e)),
+                }
+            } else if dest_path.ends_with(".gz") {
+                if !src.is_file() {
+                    return CommandResult::Error(format!("Gzip compression requires a single file: {}", src_path));
+                }
+                match gzip_file_to_temp(&src) {
+                    Ok(gz_path) => {
+                        std::fs::rename(&gz_path, &dest).map_err(|e| format!("Failed to move gzip: {}", e)).ok();
+                        CommandResult::Success(format!("Compressed to {}", dest_path))
+                    }
+                    Err(e) => CommandResult::Error(e),
+                }
+            } else {
+                CommandResult::Error(format!("Unsupported compression format: {}", dest_path))
+            }
+        }
+        CommandPayload::Decompress { src_path, dest_path } => {
+            info!("Decompressing {} -> {}", src_path, dest_path);
+            let src = expand_path(&src_path);
+            let dest = expand_path(&dest_path);
+
+            let result = if src_path.ends_with(".zip") {
+                tokio::task::spawn_blocking(move || unzip_file(&src, &dest)).await
+            } else if src_path.ends_with(".gz") {
+                let out_path = if dest.is_dir() || dest_path.ends_with('/') {
+                    let stem = src.file_stem().unwrap_or_default();
+                    dest.join(stem)
+                } else {
+                    dest.clone()
+                };
+                if let Some(p) = out_path.parent() {
+                    let _ = std::fs::create_dir_all(p);
+                }
+                tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                    let gz_file = std::fs::File::open(&src)?;
+                    let mut decoder = GzDecoderRead::new(std::io::BufReader::new(gz_file));
+                    let mut outfile = std::fs::File::create(&out_path)?;
+                    std::io::copy(&mut decoder, &mut outfile)?;
+                    Ok(())
+                }).await
+            } else {
+                return CommandResult::Error(format!("Unsupported compression format: {}", src_path));
+            };
+            match result {
+                Ok(Ok(_)) => CommandResult::Success(format!("Decompressed to {}", dest_path)),
+                Ok(Err(e)) => CommandResult::Error(format!("Decompression failed: {}", e)),
+                Err(e) => CommandResult::Error(format!("Decompression task failed: {}", e)),
             }
         }
         CommandPayload::HttpRequest { method, url, headers, query_params, body } => {

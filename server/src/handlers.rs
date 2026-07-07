@@ -622,7 +622,138 @@ async fn execute_command_locally(cmd: CommandPayload) -> CommandResult {
                 Err(e) => CommandResult::Error(format!("Failed to change dir: {}", e)),
             }
         }
+        CommandPayload::Compress { src_path, dest_path } => {
+            compress_local(&src_path, &dest_path)
+        }
+        CommandPayload::Decompress { src_path, dest_path } => {
+            decompress_local(&src_path, &dest_path)
+        }
         _ => CommandResult::Error("This command type is not supported for server-side execution".to_string()),
+    }
+}
+
+fn compress_local(src_path: &str, dest_path: &str) -> CommandResult {
+    let src = std::path::Path::new(src_path);
+    let dest = std::path::Path::new(dest_path);
+
+    if dest_path.ends_with(".zip") {
+        if src.is_dir() {
+            match zip_directory(src_path, dest_path) {
+                Ok(_) => CommandResult::Success(format!("Directory compressed to {}", dest_path)),
+                Err(e) => CommandResult::Error(format!("Compression failed: {}", e)),
+            }
+        } else if src.is_file() {
+            // Single file → wrap in a zip
+            let file = match std::fs::File::create(dest) {
+                Ok(f) => f,
+                Err(e) => return CommandResult::Error(format!("Failed to create zip: {}", e)),
+            };
+            let mut zip = zip::ZipWriter::new(file);
+            let options = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            let file_name = src.file_name().unwrap_or_default().to_string_lossy();
+            match zip.start_file(file_name.as_ref(), options) {
+                Ok(_) => {},
+                Err(e) => return CommandResult::Error(format!("Failed to add file to zip: {}", e)),
+            }
+            match std::io::copy(&mut std::fs::File::open(src).unwrap(), &mut zip) {
+                Ok(_) => {},
+                Err(e) => return CommandResult::Error(format!("Failed to write file to zip: {}", e)),
+            }
+            match zip.finish() {
+                Ok(_) => CommandResult::Success(format!("File compressed to {}", dest_path)),
+                Err(e) => CommandResult::Error(format!("Failed to finalize zip: {}", e)),
+            }
+        } else {
+            CommandResult::Error(format!("Source path not found: {}", src_path))
+        }
+    } else if dest_path.ends_with(".gz") {
+        if !src.is_file() {
+            return CommandResult::Error(format!("Gzip compression requires a single file: {}", src_path));
+        }
+        let src_file = match std::fs::File::open(src) {
+            Ok(f) => f,
+            Err(e) => return CommandResult::Error(format!("Failed to open source: {}", e)),
+        };
+        let mut encoder = GzEncoderRead::new(std::io::BufReader::new(src_file), Compression::default());
+        let mut dst_file = match std::fs::File::create(dest) {
+            Ok(f) => f,
+            Err(e) => return CommandResult::Error(format!("Failed to create dest: {}", e)),
+        };
+        match std::io::copy(&mut encoder, &mut dst_file) {
+            Ok(_) => CommandResult::Success(format!("File compressed to {}", dest_path)),
+            Err(e) => CommandResult::Error(format!("Gzip failed: {}", e)),
+        }
+    } else {
+        CommandResult::Error(format!("Unsupported compression format: {}", dest_path))
+    }
+}
+
+fn decompress_local(src_path: &str, dest_path: &str) -> CommandResult {
+    let src = std::path::Path::new(src_path);
+    let dest = std::path::Path::new(dest_path);
+
+    if !src.exists() {
+        return CommandResult::Error(format!("Source not found: {}", src_path));
+    }
+
+    if src_path.ends_with(".zip") {
+        let file = match std::fs::File::open(src) {
+            Ok(f) => f,
+            Err(e) => return CommandResult::Error(format!("Failed to open zip: {}", e)),
+        };
+        let mut archive = match zip::ZipArchive::new(file) {
+            Ok(a) => a,
+            Err(e) => return CommandResult::Error(format!("Failed to read zip: {}", e)),
+        };
+        if let Err(e) = std::fs::create_dir_all(dest) {
+            return CommandResult::Error(format!("Failed to create output directory: {}", e));
+        }
+        for i in 0..archive.len() {
+            let mut file = match archive.by_index(i) {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
+            let outpath = match file.enclosed_name() {
+                Some(p) => dest.join(p),
+                None => continue,
+            };
+            if file.name().ends_with('/') {
+                let _ = std::fs::create_dir_all(&outpath);
+            } else {
+                if let Some(p) = outpath.parent() {
+                    let _ = std::fs::create_dir_all(p);
+                }
+                if let Ok(mut outfile) = std::fs::File::create(&outpath) {
+                    let _ = std::io::copy(&mut file, &mut outfile);
+                }
+            }
+        }
+        CommandResult::Success(format!("Extracted {} to {}", src_path, dest_path))
+    } else if src_path.ends_with(".gz") {
+        let mut decoder = match std::fs::File::open(src) {
+            Ok(f) => GzDecoderRead::new(std::io::BufReader::new(f)),
+            Err(e) => return CommandResult::Error(format!("Failed to open gzip: {}", e)),
+        };
+        let out_path = if dest.is_dir() {
+            let stem = src.file_stem().unwrap_or_default();
+            dest.join(stem)
+        } else {
+            dest.to_path_buf()
+        };
+        if let Some(p) = out_path.parent() {
+            let _ = std::fs::create_dir_all(p);
+        }
+        let mut outfile = match std::fs::File::create(&out_path) {
+            Ok(f) => f,
+            Err(e) => return CommandResult::Error(format!("Failed to create output: {}", e)),
+        };
+        match std::io::copy(&mut decoder, &mut outfile) {
+            Ok(_) => CommandResult::Success(format!("Decompressed {} to {}", src_path, out_path.display())),
+            Err(e) => CommandResult::Error(format!("Gunzip failed: {}", e)),
+        }
+    } else {
+        CommandResult::Error(format!("Unsupported compression format: {}", src_path))
     }
 }
 
@@ -795,6 +926,12 @@ pub(crate) async fn run_script_task(state: Arc<AppState>, client_id: Uuid, scrip
             ScriptStep::Delete { path, .. } => {
                 Ok(CommandPayload::DeleteFile { path: path.clone() })
             }
+            ScriptStep::Compress { src_path, dest_path, .. } => {
+                Ok(CommandPayload::Compress { src_path: src_path.clone(), dest_path: dest_path.clone() })
+            }
+            ScriptStep::Decompress { src_path, dest_path, .. } => {
+                Ok(CommandPayload::Decompress { src_path: src_path.clone(), dest_path: dest_path.clone() })
+            }
             ScriptStep::HttpRequest { url, method, headers, query_params, body, .. } => {
                 Ok(CommandPayload::HttpRequest {
                     url: url.clone(),
@@ -815,6 +952,8 @@ pub(crate) async fn run_script_task(state: Arc<AppState>, client_id: Uuid, scrip
             ScriptStep::Copy { src_path, dest_path, .. } => format!("Copy: {} -> {}", src_path, dest_path),
             ScriptStep::Move { src_path, dest_path, .. } => format!("Move: {} -> {}", src_path, dest_path),
             ScriptStep::Delete { path, .. } => format!("Delete: {}", path),
+            ScriptStep::Compress { src_path, dest_path, .. } => format!("Compress: {} -> {}", src_path, dest_path),
+            ScriptStep::Decompress { src_path, dest_path, .. } => format!("Decompress: {} -> {}", src_path, dest_path),
             ScriptStep::HttpRequest { url, method, .. } => format!("HttpRequest: {} {}", method.clone().unwrap_or_else(|| "GET".to_string()), url),
         };
 

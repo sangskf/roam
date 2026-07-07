@@ -587,6 +587,8 @@
                                                 <option value="Copy">{{ t('copy') }}</option>
                                                 <option value="Move">{{ t('move') }}</option>
                                                 <option value="Delete">{{ t('delete') }}</option>
+                                                <option value="Compress">{{ t('compress') }}</option>
+                                                <option value="Decompress">{{ t('decompress') }}</option>
                                                 <option value="HttpRequest">{{ t('httpRequest') }}</option>
                                             </select>
                                         </div>
@@ -630,6 +632,12 @@
                                             <div v-if="step.type === 'Delete'">
                                                 <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('path') }}</label>
                                                 <input v-model="step.path" class="w-full border rounded px-2 py-1 text-sm">
+                                            </div>
+                                            <div v-if="step.type === 'Compress' || step.type === 'Decompress'">
+                                                <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('sourcePath') }}</label>
+                                                <input v-model="step.src_path" class="w-full border rounded px-2 py-1 text-sm mb-2" placeholder="C:\temp\source">
+                                                <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('destPath') }}</label>
+                                                <input v-model="step.dest_path" class="w-full border rounded px-2 py-1 text-sm" placeholder="C:\temp\output.zip">
                                             </div>
                                             <div v-if="step.type === 'HttpRequest'">
                                                 <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('url') }}</label>
@@ -1184,6 +1192,8 @@
                                             <option value="Copy">{{ t('copy') }}</option>
                                             <option value="Move">{{ t('move') }}</option>
                                             <option value="Delete">{{ t('delete') }}</option>
+                                            <option value="Compress">{{ t('compress') }}</option>
+                                            <option value="Decompress">{{ t('decompress') }}</option>
                                             <option value="HttpRequest">{{ t('httpRequest') }}</option>
                                         </select>
                                         <label class="flex items-center gap-1 mt-2 text-xs text-gray-500 cursor-pointer">
@@ -1273,6 +1283,18 @@
                                             <div class="flex gap-2 items-center">
                                                 <input v-model="step.path" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="/tmp/file_or_dir">
                                                 <button type="button" @click="step.path_is_absolute = !step.path_is_absolute" class="px-2 py-1 text-xs rounded border shrink-0 whitespace-nowrap" :class="step.path_is_absolute ? 'bg-orange-50 border-orange-300 text-orange-600' : 'bg-gray-50 border-gray-300 text-gray-500'">{{ step.path_is_absolute ? '绝对' : '相对' }}</button>
+                                            </div>
+                                        </div>
+                                        <div v-if="step.type === 'Compress' || step.type === 'Decompress'">
+                                            <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('sourcePath') }}</label>
+                                            <div class="flex gap-2 items-center mb-2">
+                                                <input v-model="step.src_path" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="C:\temp\source">
+                                                <button type="button" @click="step.src_path_is_absolute = !step.src_path_is_absolute" class="px-2 py-1 text-xs rounded border shrink-0 whitespace-nowrap" :class="step.src_path_is_absolute ? 'bg-orange-50 border-orange-300 text-orange-600' : 'bg-gray-50 border-gray-300 text-gray-500'">{{ step.src_path_is_absolute ? '绝对' : '相对' }}</button>
+                                            </div>
+                                            <label class="block text-xs font-bold text-gray-500 mb-1">{{ t('destPath') }}</label>
+                                            <div class="flex gap-2 items-center">
+                                                <input v-model="step.dest_path" class="flex-1 border rounded px-2 py-1 text-sm" placeholder="C:\temp\output.zip">
+                                                <button type="button" @click="step.dest_path_is_absolute = !step.dest_path_is_absolute" class="px-2 py-1 text-xs rounded border shrink-0 whitespace-nowrap" :class="step.dest_path_is_absolute ? 'bg-orange-50 border-orange-300 text-orange-600' : 'bg-gray-50 border-gray-300 text-gray-500'">{{ step.dest_path_is_absolute ? '绝对' : '相对' }}</button>
                                             </div>
                                         </div>
                                         <div v-if="step.type === 'HttpRequest'">
@@ -2222,6 +2244,8 @@
                         runOnServer: 'Server',
                         updates: 'Updates',
                         httpRequest: 'HTTP Request',
+                        compress: 'Compress',
+                        decompress: 'Decompress',
                         searchPlaceholder: 'Search hostname, alias, IP...',
                         allStatus: 'All Status',
                         openLink: 'Open Link',
@@ -2500,6 +2524,8 @@
                         runOnServer: '服务端',
                         updates: '更新管理',
                         httpRequest: 'HTTP 请求',
+                        compress: '压缩',
+                        decompress: '解压',
                         searchPlaceholder: '搜索主机名、别名、IP...',
                         allStatus: '全部状态',
                         openLink: '打开链接',
@@ -3797,6 +3823,10 @@
                                 return { type: 'Move', src_path: s.payload.src_path, dest_path: s.payload.dest_path, src_path_is_absolute: s.payload.src_path_is_absolute || false, dest_path_is_absolute: s.payload.dest_path_is_absolute || false }
                             } else if (s.type === 'Delete') {
                                 return { type: 'Delete', path: s.payload.path, path_is_absolute: s.payload.path_is_absolute || false }
+                            } else if (s.type === 'Compress') {
+                                return { type: 'Compress', src_path: s.payload.src_path || '', dest_path: s.payload.dest_path || '', src_path_is_absolute: s.payload.src_path_is_absolute || false, dest_path_is_absolute: s.payload.dest_path_is_absolute || false }
+                            } else if (s.type === 'Decompress') {
+                                return { type: 'Decompress', src_path: s.payload.src_path || '', dest_path: s.payload.dest_path || '', src_path_is_absolute: s.payload.src_path_is_absolute || false, dest_path_is_absolute: s.payload.dest_path_is_absolute || false }
                             } else if (s.type === 'HttpRequest') {
                                 return { type: 'HttpRequest', url: s.payload.url, method: s.payload.method || 'GET', headers: s.payload.headers || [], query_params: s.payload.query_params || [], body: s.payload.body || '' }
                             }
@@ -3819,7 +3849,7 @@
                 }
 
                 const addStep = () => {
-                    newScript.value.steps.push({ type: 'Shell', cmd: '', args: '', local_path: '', remote_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path_is_absolute: false, dest_path_is_absolute: false, path_is_absolute: false, url: '', method: 'GET', headers: [], query_params: [], body: '', run_on_server: false, server_save_path: '', compress: false })
+                    newScript.value.steps.push({ type: 'Shell', cmd: '', args: '', local_path: '', remote_path: '', src_path: '', dest_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path_is_absolute: false, dest_path_is_absolute: false, path_is_absolute: false, url: '', method: 'GET', headers: [], query_params: [], body: '', run_on_server: false, server_save_path: '', compress: false })
                 }
 
                 const removeStep = (index) => {
@@ -3858,6 +3888,10 @@
                             return { type: 'Move', payload: { src_path: s.src_path, dest_path: s.dest_path, src_path_is_absolute: s.src_path_is_absolute || false, dest_path_is_absolute: s.dest_path_is_absolute || false } }
                         } else if (s.type === 'Delete') {
                             return { type: 'Delete', payload: { path: s.path, path_is_absolute: s.path_is_absolute || false } }
+                        } else if (s.type === 'Compress') {
+                            return { type: 'Compress', payload: { src_path: s.src_path, dest_path: s.dest_path, src_path_is_absolute: s.src_path_is_absolute || false, dest_path_is_absolute: s.dest_path_is_absolute || false } }
+                        } else if (s.type === 'Decompress') {
+                            return { type: 'Decompress', payload: { src_path: s.src_path, dest_path: s.dest_path, src_path_is_absolute: s.src_path_is_absolute || false, dest_path_is_absolute: s.dest_path_is_absolute || false } }
                         } else if (s.type === 'HttpRequest') {
                             return { type: 'HttpRequest', payload: { url: s.url, method: s.method, headers: s.headers || [], query_params: s.query_params || [], body: s.body || '' } }
                         }
@@ -4322,6 +4356,10 @@
                             return { type: s.type, cmd: '', args: '', local_path: '', remote_path: '', src_path: p.src_path || '', dest_path: p.dest_path || '', path: '', url: '', method: 'GET', body: '', server_save_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path_is_absolute: !!p.src_path_is_absolute, dest_path_is_absolute: !!p.dest_path_is_absolute, path_is_absolute: false, run_on_server: false }
                         } else if (s.type === 'Delete') {
                             return { type: 'Delete', cmd: '', args: '', local_path: '', remote_path: '', src_path: '', dest_path: '', path: p.path || '', url: '', method: 'GET', body: '', server_save_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path_is_absolute: false, dest_path_is_absolute: false, path_is_absolute: !!p.path_is_absolute, run_on_server: false }
+                        } else if (s.type === 'Compress') {
+                            return { type: 'Compress', cmd: '', args: '', local_path: '', remote_path: '', src_path: p.src_path || '', dest_path: p.dest_path || '', path: '', url: '', method: 'GET', body: '', server_save_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path_is_absolute: !!p.src_path_is_absolute, dest_path_is_absolute: !!p.dest_path_is_absolute, path_is_absolute: false, run_on_server: false }
+                        } else if (s.type === 'Decompress') {
+                            return { type: 'Decompress', cmd: '', args: '', local_path: '', remote_path: '', src_path: p.src_path || '', dest_path: p.dest_path || '', path: '', url: '', method: 'GET', body: '', server_save_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path_is_absolute: !!p.src_path_is_absolute, dest_path_is_absolute: !!p.dest_path_is_absolute, path_is_absolute: false, run_on_server: false }
                         } else if (s.type === 'HttpRequest') {
                             return { type: 'HttpRequest', cmd: '', args: '', local_path: '', remote_path: '', src_path: '', dest_path: '', path: '', url: p.url || '', method: p.method || 'GET', headers: p.headers || [], query_params: p.query_params || [], body: p.body || '', server_save_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path_is_absolute: false, dest_path_is_absolute: false, path_is_absolute: false, run_on_server: false }
                         }
@@ -4416,7 +4454,7 @@
                 }
 
                 const addScheduledStep = () => {
-                    scheduledForm.value.steps.push({ type: 'Shell', cmd: '', args: '', local_path: '', remote_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path: '', dest_path: '', src_path_is_absolute: false, dest_path_is_absolute: false, path: '', path_is_absolute: false, url: '', method: 'GET', headers: [], query_params: [], body: '', run_on_server: false, server_save_path: '' })
+                    scheduledForm.value.steps.push({ type: 'Shell', cmd: '', args: '', local_path: '', remote_path: '', src_path: '', dest_path: '', local_path_is_absolute: false, remote_path_is_absolute: false, src_path_is_absolute: false, dest_path_is_absolute: false, path: '', path_is_absolute: false, url: '', method: 'GET', headers: [], query_params: [], body: '', run_on_server: false, server_save_path: '' })
                 }
 
                 const removeScheduledStep = (index) => {
@@ -4441,6 +4479,10 @@
                             return { type: 'Move', payload: { src_path: s.src_path, dest_path: s.dest_path, src_path_is_absolute: !!s.src_path_is_absolute, dest_path_is_absolute: !!s.dest_path_is_absolute } }
                         } else if (s.type === 'Delete') {
                             return { type: 'Delete', payload: { path: s.path, path_is_absolute: !!s.path_is_absolute } }
+                        } else if (s.type === 'Compress') {
+                            return { type: 'Compress', payload: { src_path: s.src_path, dest_path: s.dest_path, src_path_is_absolute: !!s.src_path_is_absolute, dest_path_is_absolute: !!s.dest_path_is_absolute } }
+                        } else if (s.type === 'Decompress') {
+                            return { type: 'Decompress', payload: { src_path: s.src_path, dest_path: s.dest_path, src_path_is_absolute: !!s.src_path_is_absolute, dest_path_is_absolute: !!s.dest_path_is_absolute } }
                         } else if (s.type === 'HttpRequest') {
                             return { type: 'HttpRequest', payload: { url: s.url, method: s.method || 'GET', headers: s.headers || [], query_params: s.query_params || [], body: s.body || '' } }
                         }

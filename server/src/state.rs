@@ -98,6 +98,16 @@ pub enum ScriptStep {
         #[serde(default)] path_is_absolute: Option<bool>,
         #[serde(default)] run_on_server: Option<bool>,
     },
+    Compress {
+        src_path: String,
+        dest_path: String,
+        #[serde(default)] run_on_server: Option<bool>,
+    },
+    Decompress {
+        src_path: String,
+        dest_path: String,
+        #[serde(default)] run_on_server: Option<bool>,
+    },
     HttpRequest {
         url: String,
         #[serde(default)] method: Option<String>,
@@ -134,6 +144,8 @@ impl ScriptStep {
             | ScriptStep::Copy { run_on_server, .. }
             | ScriptStep::Move { run_on_server, .. }
             | ScriptStep::Delete { run_on_server, .. }
+            | ScriptStep::Compress { run_on_server, .. }
+            | ScriptStep::Decompress { run_on_server, .. }
             | ScriptStep::HttpRequest { run_on_server, .. } => run_on_server.unwrap_or(false),
         }
     }

@@ -67,6 +67,8 @@ pub enum CommandPayload {
     CopyFile { src_path: String, dest_path: String },
     MoveFile { src_path: String, dest_path: String },
     DeleteFile { path: String },
+    Compress { src_path: String, dest_path: String },
+    Decompress { src_path: String, dest_path: String },
     HttpRequest {
         method: String,
         url: String,
