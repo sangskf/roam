@@ -199,17 +199,33 @@ async fn single_download(url: &str, dest_path: &Path, client: &reqwest::Client, 
 }
 
 async fn chunked_download(url: &str, dest_path: &Path, client: &reqwest::Client, chunk_size: usize, max_concurrent: usize, progress_tx: &Option<tokio::sync::mpsc::Sender<String>>) -> Result<(), String> {
-    // HEAD request to get file size and check range support
-    let head_resp = client.head(url).send().await.map_err(|e| format!("HEAD request failed: {}", e))?;
+    // Use a ranged GET request (instead of HEAD) to probe the file size and range support.
+    // Some client-side routers only permit GET/POST requests and block methods like HEAD/TRACE.
+    // "bytes=0-0" fetches at most a single byte while still returning the metadata we need.
+    let probe_resp = client.get(url)
+        .header(reqwest::header::RANGE, "bytes=0-0")
+        .send()
+        .await
+        .map_err(|e| format!("Probe (GET) request failed: {}", e))?;
 
-    let file_size: usize = head_resp
+    // Prefer the total size from Content-Range (206 Partial Content); fall back to
+    // Content-Length for servers that ignore the Range header.
+    let file_size: usize = probe_resp
         .headers()
-        .get(reqwest::header::CONTENT_LENGTH)
+        .get(reqwest::header::CONTENT_RANGE)
         .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.rsplit('/').next())
         .and_then(|v| v.parse().ok())
-        .ok_or_else(|| "Missing Content-Length header".to_string())?;
+        .or_else(|| {
+            probe_resp
+                .headers()
+                .get(reqwest::header::CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse().ok())
+        })
+        .ok_or_else(|| "Missing Content-Range/Content-Length header".to_string())?;
 
-    let accept_ranges = head_resp
+    let accept_ranges = probe_resp
         .headers()
         .get(reqwest::header::ACCEPT_RANGES)
         .and_then(|v| v.to_str().ok())
@@ -367,7 +383,7 @@ async fn chunked_upload(file_path: &Path, upload_url: &str, client: &reqwest::Cl
             let mut chunk_data = vec![0u8; chunk_size_bytes];
             file.read_exact(&mut chunk_data).await.map_err(|e| format!("Failed to read chunk {}: {}", i, e))?;
 
-            let resp = client.put(&chunk_url)
+            let resp = client.post(&chunk_url)
                 .header("Content-Type", "application/octet-stream")
                 .body(chunk_data)
                 .send()
