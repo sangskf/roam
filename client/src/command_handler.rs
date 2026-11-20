@@ -198,40 +198,82 @@ async fn single_download(url: &str, dest_path: &Path, client: &reqwest::Client, 
     }
 }
 
-async fn chunked_download(url: &str, dest_path: &Path, client: &reqwest::Client, chunk_size: usize, max_concurrent: usize, progress_tx: &Option<tokio::sync::mpsc::Sender<String>>) -> Result<(), String> {
-    // Use a ranged GET request (instead of HEAD) to probe the file size and range support.
-    // Some client-side routers only permit GET/POST requests and block methods like HEAD/TRACE.
-    // "bytes=0-0" fetches at most a single byte while still returning the metadata we need.
-    let probe_resp = client.get(url)
+/// Probe a download URL for its file size and Range support.
+///
+/// HEAD is preferred because it transfers no response body. Some client-side
+/// routers, however, only permit GET/POST and block methods such as HEAD/TRACE.
+/// When HEAD is unavailable (transport error, 405/501, or missing metadata), we
+/// transparently fall back to a ranged GET that fetches at most a single byte.
+/// Returns `(file_size, supports_ranges)`.
+async fn probe_download(url: &str, client: &reqwest::Client) -> Result<(usize, bool), String> {
+    // 1) Preferred: HEAD request — no body, minimal bandwidth.
+    match client.head(url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let headers = resp.headers();
+            if let Some(size) = headers
+                .get(reqwest::header::CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<usize>().ok())
+            {
+                let supports_ranges = headers
+                    .get(reqwest::header::ACCEPT_RANGES)
+                    .and_then(|v| v.to_str().ok())
+                    .map(|v| v.contains("bytes"))
+                    .unwrap_or(false);
+                return Ok((size, supports_ranges));
+            }
+            warn!("HEAD for {} returned no Content-Length, falling back to ranged GET", url);
+        }
+        Ok(resp) => {
+            warn!("HEAD for {} returned status {}, falling back to ranged GET", url, resp.status());
+        }
+        Err(e) => {
+            warn!("HEAD for {} failed ({}), falling back to ranged GET", url, e);
+        }
+    }
+
+    // 2) Fallback: ranged GET — allowed by routers that only permit GET/POST.
+    let resp = client.get(url)
         .header(reqwest::header::RANGE, "bytes=0-0")
         .send()
         .await
         .map_err(|e| format!("Probe (GET) request failed: {}", e))?;
 
-    // Prefer the total size from Content-Range (206 Partial Content); fall back to
-    // Content-Length for servers that ignore the Range header.
-    let file_size: usize = probe_resp
-        .headers()
+    if !resp.status().is_success() {
+        return Err(format!("Probe (GET) request returned status: {}", resp.status()));
+    }
+
+    let is_partial = resp.status() == reqwest::StatusCode::PARTIAL_CONTENT;
+    let headers = resp.headers();
+
+    // 206 Partial Content carries the total size in Content-Range; a server that
+    // ignores Range returns 200 with the full size in Content-Length.
+    let file_size: usize = headers
         .get(reqwest::header::CONTENT_RANGE)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.rsplit('/').next())
         .and_then(|v| v.parse().ok())
         .or_else(|| {
-            probe_resp
-                .headers()
+            headers
                 .get(reqwest::header::CONTENT_LENGTH)
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.parse().ok())
         })
         .ok_or_else(|| "Missing Content-Range/Content-Length header".to_string())?;
 
-    let accept_ranges = probe_resp
-        .headers()
+    let supports_ranges = is_partial || headers
         .get(reqwest::header::ACCEPT_RANGES)
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+        .map(|v| v.contains("bytes"))
+        .unwrap_or(false);
 
-    if file_size <= chunk_size || !accept_ranges.contains("bytes") {
+    Ok((file_size, supports_ranges))
+}
+
+async fn chunked_download(url: &str, dest_path: &Path, client: &reqwest::Client, chunk_size: usize, max_concurrent: usize, progress_tx: &Option<tokio::sync::mpsc::Sender<String>>) -> Result<(), String> {
+    let (file_size, supports_ranges) = probe_download(url, client).await?;
+
+    if file_size <= chunk_size || !supports_ranges {
         return single_download(url, dest_path, client, progress_tx).await;
     }
 
@@ -1033,5 +1075,110 @@ async fn download_and_replace(url: &str, tls_insecure: bool, chunk_size: usize, 
     #[cfg(not(any(unix, windows)))]
     {
         anyhow::bail!("Automatic restart not supported on this platform");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::TcpListener;
+
+    /// Minimal HTTP server that records request lines. When `head_allowed` is
+    /// false it rejects HEAD with 405, mimicking routers that block HEAD.
+    async fn spawn_mock_server(head_allowed: bool) -> (String, Arc<Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let recorded = requests.clone();
+
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = match listener.accept().await {
+                    Ok(pair) => pair,
+                    Err(_) => break,
+                };
+                let recorded = recorded.clone();
+                tokio::spawn(async move {
+                    // Read until the end of the request headers (\r\n\r\n), since
+                    // the request line and headers may arrive in separate packets.
+                    let mut request_bytes = Vec::new();
+                    let mut buf = [0u8; 1024];
+                    loop {
+                        let n = socket.read(&mut buf).await.unwrap_or(0);
+                        if n == 0 {
+                            break;
+                        }
+                        request_bytes.extend_from_slice(&buf[..n]);
+                        if request_bytes.windows(4).any(|w| w == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    if request_bytes.is_empty() {
+                        return;
+                    }
+                    let request = String::from_utf8_lossy(&request_bytes).to_string();
+                    let request_line = request.lines().next().unwrap_or("").to_string();
+                    recorded.lock().unwrap().push(request.clone());
+
+                    let (status, headers) = if request_line.starts_with("HEAD ") {
+                        if head_allowed {
+                            (200, "Content-Length: 1048576\r\nAccept-Ranges: bytes\r\n")
+                        } else {
+                            (405, "Allow: GET\r\nContent-Length: 0\r\n")
+                        }
+                    } else {
+                        (206, "Content-Length: 1\r\nContent-Range: bytes 0-0/1048576\r\nAccept-Ranges: bytes\r\n")
+                    };
+                    let reason = match status {
+                        200 => "OK",
+                        206 => "Partial Content",
+                        _ => "Method Not Allowed",
+                    };
+                    let response = format!(
+                        "HTTP/1.1 {} {}\r\n{}\r\nConnection: close\r\n\r\n",
+                        status, reason, headers
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+
+        (format!("http://{}", addr), requests)
+    }
+
+    fn test_client() -> reqwest::Client {
+        reqwest::Client::builder().no_proxy().build().unwrap()
+    }
+
+    #[tokio::test]
+    async fn probe_uses_head_when_supported() {
+        let (url, requests) = spawn_mock_server(true).await;
+        let (size, ranges) = probe_download(&url, &test_client()).await.unwrap();
+
+        assert_eq!(size, 1048576);
+        assert!(ranges, "HEAD response declares Accept-Ranges: bytes");
+        let recorded = requests.lock().unwrap();
+        assert_eq!(recorded.len(), 1, "only one request should be sent");
+        assert!(recorded[0].starts_with("HEAD "), "expected HEAD, got {}", recorded[0]);
+    }
+
+    #[tokio::test]
+    async fn probe_falls_back_to_get_when_head_is_blocked() {
+        let (url, requests) = spawn_mock_server(false).await;
+        let (size, ranges) = probe_download(&url, &test_client()).await.unwrap();
+
+        assert_eq!(size, 1048576);
+        assert!(ranges, "ranged GET response declares Accept-Ranges: bytes");
+        let recorded = requests.lock().unwrap();
+        assert_eq!(recorded.len(), 2, "expected HEAD then GET");
+        assert!(recorded[0].starts_with("HEAD "), "first request should be HEAD: {}", recorded[0]);
+        assert!(recorded[1].starts_with("GET "), "second request should be GET: {}", recorded[1]);
+        assert!(
+            recorded[1].to_lowercase().contains("range: bytes=0-0"),
+            "fallback GET should carry Range header: {}",
+            recorded[1]
+        );
     }
 }
