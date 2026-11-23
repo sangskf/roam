@@ -116,6 +116,19 @@ fn build_http_client(tls_insecure: bool) -> Result<reqwest::Client, String> {
         .map_err(|e| format!("Failed to build http client: {}", e))
 }
 
+/// Render an error together with its full source chain so the real network-level
+/// cause (TLS certificate, DNS, connection reset, proxy, ...) shows up in logs
+/// instead of only the generic "error sending request for url" wrapper.
+fn describe_error(e: &reqwest::Error) -> String {
+    let mut msg = e.to_string();
+    let mut source: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(e);
+    while let Some(s) = source {
+        msg.push_str(&format!(" <- {}", s));
+        source = s.source();
+    }
+    msg
+}
+
 /// Gzip a file to a temporary file and return the temp path.
 /// The temp file is placed alongside the source to avoid cross-filesystem moves.
 fn gzip_file_to_temp(src: &Path) -> Result<PathBuf, String> {
@@ -173,11 +186,11 @@ async fn single_download(url: &str, dest_path: &Path, client: &reqwest::Client, 
         let _ = tx.try_send(format!("Downloading: {} → {}", url, dest_path.display())).ok();
     }
     info!("Downloading {} to {} via single download", url, dest_path.display());
-    let resp = client.get(url).send().await.map_err(|e| format!("Download failed: {}", e))?;
+    let resp = client.get(url).send().await.map_err(|e| format!("Download failed: {}", describe_error(&e)))?;
     if !resp.status().is_success() {
         return Err(format!("Download failed with status: {}", resp.status()));
     }
-    let bytes = resp.bytes().await.map_err(|e| format!("Failed to read response: {}", e))?;
+    let bytes = resp.bytes().await.map_err(|e| format!("Failed to read response: {}", describe_error(&e)))?;
 
     match tokio::fs::write(dest_path, &bytes).await {
         Ok(_) => {
@@ -228,7 +241,7 @@ async fn probe_download(url: &str, client: &reqwest::Client) -> Result<(usize, b
             warn!("HEAD for {} returned status {}, falling back to ranged GET", url, resp.status());
         }
         Err(e) => {
-            warn!("HEAD for {} failed ({}), falling back to ranged GET", url, e);
+            warn!("HEAD for {} failed ({}), falling back to ranged GET", url, describe_error(&e));
         }
     }
 
@@ -237,7 +250,7 @@ async fn probe_download(url: &str, client: &reqwest::Client) -> Result<(usize, b
         .header(reqwest::header::RANGE, "bytes=0-0")
         .send()
         .await
-        .map_err(|e| format!("Probe (GET) request failed: {}", e))?;
+        .map_err(|e| format!("Probe (GET) request failed: {}", describe_error(&e)))?;
 
     if !resp.status().is_success() {
         return Err(format!("Probe (GET) request returned status: {}", resp.status()));
@@ -271,7 +284,19 @@ async fn probe_download(url: &str, client: &reqwest::Client) -> Result<(usize, b
 }
 
 async fn chunked_download(url: &str, dest_path: &Path, client: &reqwest::Client, chunk_size: usize, max_concurrent: usize, progress_tx: &Option<tokio::sync::mpsc::Sender<String>>) -> Result<(), String> {
-    let (file_size, supports_ranges) = probe_download(url, client).await?;
+    // Probe is only an optimization for parallel chunked download. If both HEAD
+    // and the ranged GET are blocked (some routers/proxies filter these), do not
+    // fail the whole transfer — fall back to a plain GET download instead.
+    let (file_size, supports_ranges) = match probe_download(url, client).await {
+        Ok(info) => info,
+        Err(e) => {
+            warn!("Download probe failed ({}), falling back to plain GET download", e);
+            if let Some(ref tx) = progress_tx {
+                let _ = tx.try_send("Probing unavailable, falling back to plain GET download".to_string()).ok();
+            }
+            return single_download(url, dest_path, client, progress_tx).await;
+        }
+    };
 
     if file_size <= chunk_size || !supports_ranges {
         return single_download(url, dest_path, client, progress_tx).await;
@@ -1180,5 +1205,83 @@ mod tests {
             "fallback GET should carry Range header: {}",
             recorded[1]
         );
+    }
+
+    /// Simulates a restrictive router: HEAD is rejected, any GET carrying a
+    /// Range header is dropped (connection reset), but a plain GET succeeds.
+    async fn spawn_restrictive_server(body: &'static str) -> (String, Arc<Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let recorded = requests.clone();
+
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = match listener.accept().await {
+                    Ok(pair) => pair,
+                    Err(_) => break,
+                };
+                let recorded = recorded.clone();
+                tokio::spawn(async move {
+                    let mut request_bytes = Vec::new();
+                    let mut buf = [0u8; 1024];
+                    loop {
+                        let n = socket.read(&mut buf).await.unwrap_or(0);
+                        if n == 0 {
+                            break;
+                        }
+                        request_bytes.extend_from_slice(&buf[..n]);
+                        if request_bytes.windows(4).any(|w| w == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    if request_bytes.is_empty() {
+                        return;
+                    }
+                    let request = String::from_utf8_lossy(&request_bytes).to_string();
+                    let is_head = request.starts_with("HEAD ");
+                    let has_range = request.to_lowercase().contains("range:");
+                    recorded.lock().unwrap().push(request.clone());
+
+                    // Drop the connection for HEAD and ranged GET — mimics routers
+                    // that reset such requests at the transport level.
+                    if is_head || has_range {
+                        return;
+                    }
+
+                    let response = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = socket.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+
+        (format!("http://{}", addr), requests)
+    }
+
+    #[tokio::test]
+    async fn chunked_download_falls_back_to_plain_get_when_probe_is_blocked() {
+        let body = "restrictive-router-payload";
+        let (url, requests) = spawn_restrictive_server(body).await;
+        let dest = std::env::temp_dir().join(format!("roam_fallback_{}", uuid::Uuid::new_v4()));
+
+        chunked_download(&url, &dest, &test_client(), 4, 2, &None)
+            .await
+            .expect("download should still succeed via plain GET fallback");
+
+        let content = tokio::fs::read(&dest).await.unwrap();
+        assert_eq!(String::from_utf8_lossy(&content), body);
+        let _ = tokio::fs::remove_file(&dest);
+
+        let recorded = requests.lock().unwrap();
+        assert!(recorded.len() >= 3, "expected HEAD, ranged GET, then plain GET");
+        assert!(recorded[0].starts_with("HEAD "), "first request should be HEAD: {}", recorded[0]);
+        assert!(recorded[1].to_lowercase().contains("range:"), "second request should be ranged GET: {}", recorded[1]);
+        let last = recorded.last().unwrap();
+        assert!(last.starts_with("GET ") && !last.to_lowercase().contains("range:"),
+            "last request should be a plain GET: {}", last);
     }
 }
