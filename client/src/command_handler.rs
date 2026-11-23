@@ -109,9 +109,26 @@ fn unzip_file(zip_path: &std::path::Path, dest_dir: &std::path::Path) -> anyhow:
 }
 
 fn build_http_client(tls_insecure: bool) -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+    let mut builder = reqwest::Client::builder()
         .danger_accept_invalid_certs(tls_insecure)
-        .timeout(Duration::from_secs(3600))
+        .timeout(Duration::from_secs(3600));
+
+    // File-transfer URLs point at our own server and should be reached directly.
+    // By default ignore any system proxy / HTTP(S)_PROXY env vars: some client
+    // machines have a proxy or HTTPS-inspection agent that intercepts the CONNECT
+    // tunnel and returns a malformed TLS response, which Windows SChannel reports
+    // as 0x80090326 (SEC_E_ILLEGAL_MESSAGE) during the handshake. This is why only
+    // some clients failed while others (direct connections) worked fine.
+    // Environments that genuinely require a proxy can opt back in with
+    // ROAM_USE_SYSTEM_PROXY=1.
+    let use_system_proxy = std::env::var("ROAM_USE_SYSTEM_PROXY")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if !use_system_proxy {
+        builder = builder.no_proxy();
+    }
+
+    builder
         .build()
         .map_err(|e| format!("Failed to build http client: {}", e))
 }
